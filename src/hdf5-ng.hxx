@@ -635,7 +635,9 @@ struct group_btree_v1 : public file_object {
 
 };
 
+template<typename record_type>
 struct group_btree_v2_node;
+
 
 struct group_btree_v2 : public file_object {
 
@@ -707,6 +709,96 @@ struct group_btree_v2 : public file_object {
 
 };
 
+// Layout: Version 2 B-tree, Type 1 Record Layout - Indirectly Accessed, Non-filtered, ‘Huge’ Fractal Heap Objects
+struct btree_v2_record_type1 {
+	offset_type address;
+	length_type length;
+	length_type id;
+} __attribute__((packed));
+
+// Layout: Version 2 B-tree, Type 2 Record Layout - Indirectly Accessed, Filtered, ‘Huge’ Fractal Heap Objects
+struct btree_v2_record_type2 {
+	offset_type address;
+	length_type length;
+	uint32_t filter_mask;
+	length_type memory_size;
+	length_type id;
+} __attribute__((packed));
+
+// Layout: Version 2 B-tree, Type 3 Record Layout - Directly Accessed, Non-filtered, ‘Huge’ Fractal Heap Objects
+struct btree_v2_record_type3 {
+	offset_type address;
+	length_type length;
+} __attribute__((packed));
+
+// Layout: Version 2 B-tree, Type 4 Record Layout - Directly Accessed, Filtered, ‘Huge’ Fractal Heap Objects
+struct btree_v2_record_type4 {
+	offset_type address;
+	length_type length;
+	uint32_t filter_mask;
+	length_type memory_size;
+} __attribute__((packed));
+
+// Layout: Version 2 B-tree, Type 5 Record Layout - Link Name for Indexed Group
+struct btree_v2_record_type5 {
+	uint32_t hash;
+	uint8_t id[7];
+} __attribute__((packed));
+
+// Layout: Version 2 B-tree, Type 6 Record Layout - Creation Order for Indexed Group
+struct btree_v2_record_type6 {
+	uint64_t creation_order;
+	uint8_t id[7];
+} __attribute__((packed));
+
+// Layout: Version 2 B-tree, Type 7 Record Layout - Shared Object Header Messages (Sub-type 0 - Message in Heap)
+struct btree_v2_record_type7_sub_type0 {
+	uint8_t message_location;
+	uint32_t hash;
+	uint32_t reference_count;
+	uint64_t heap_id;
+} __attribute__((packed));
+
+// Layout: Version 2 B-tree, Type 7 Record Layout - Shared Object Header Messages (Sub-type 1 - Message in Object Header)
+struct btree_v2_record_type7_sub_type1 {
+	uint8_t message_location;
+	uint32_t hash;
+	uint8_t reserved0;
+	uint8_t message_type;
+	uint16_t object_header_index;
+	uint64_t object_header_addr;
+} __attribute__((packed));
+
+
+// Layout: Version 2 B-tree, Type 8 Record Layout - Attribute Name for Indexed Attributes
+struct btree_v2_record_type8 {
+	uint64_t heap_id;
+	uint8_t message_flags;
+	uint32_t creation_order;
+	uint32_t hash_name;
+} __attribute__((packed));
+
+
+// Layout: Version 2 B-tree, Type 9 Record Layout - Creation Order for Indexed Attributes
+struct btree_v2_record_type9 {
+	uint64_t heap_id;
+	uint8_t message_flags;
+	uint32_t creation_order;
+} __attribute__((packed));
+
+// Layout: Version 2 B-tree, Type 10 Record Layout - Non-filtered Dataset Chunks
+struct btree_v2_record_type10 {
+	uint64_t addr;
+	// variable data;
+} __attribute__((packed));
+
+// Layout: Version 2 B-tree, Type 11 Record Layout - Filtered Dataset Chunks
+struct btree_v2_record_type11 {
+	uint64_t addr;
+	// variable data;
+} __attribute__((packed));
+
+template<typename record_type>
 struct group_btree_v2_node {
 	group_btree_v2 * root;
 	uint8_t * memory_addr;
