@@ -24,6 +24,7 @@
 #include <typeinfo>
 #include <vector>
 #include <list>
+#include <type_traits>
 
 #define STR(x) #x
 
@@ -58,6 +59,69 @@ static _named_tuple_0 OFFSETX[4] = {
 		{OFFSET_V1_SIZE_OF_OFFSET, OFFSET_V1_SIZE_OF_LENGTH},
 		{OFFSET_V2_SIZE_OF_OFFSET, OFFSET_V2_SIZE_OF_LENGTH},
 		{OFFSET_V3_SIZE_OF_OFFSET, OFFSET_V3_SIZE_OF_LENGTH}
+};
+
+template<typename T>
+static typename T::type * get_from_addr(uint8_t * addr) {
+	return reinterpret_cast<typename T::type*>(addr + T::offset);
+}
+
+struct type_spec {
+
+	struct none;
+
+	// select if T derivate from type_spec, get the size diferently
+	template<bool B, typename T>
+	struct _sizeof {
+		enum : uint64_t { value = sizeof(T) };
+	};
+
+	template<typename T>
+	struct _sizeof<true, T> {
+		enum : uint64_t { value = T::size };
+	};
+
+	template<bool B, typename T>
+	struct _return {
+		using type = T;
+	};
+
+	template<typename T>
+	struct _return<true, T> {
+		using type = uint8_t;
+	};
+
+	template<typename T>
+	struct last {
+		enum : uint64_t { size = T::offset + _sizeof<is_base_of<type_spec, T>::value, T>::value };
+	};
+
+	template<typename T, typename PREV>
+	struct spec {
+		enum : bool { prev_is_typespec = std::is_base_of<type_spec, typename PREV::type>::value };
+		using type = T;
+		enum : uint64_t { offset = PREV::offset + _sizeof<prev_is_typespec, typename PREV::type>::value };
+
+		using return_type = typename _return<is_base_of<type_spec, T>::value, T>::type;
+		static return_type * get(uint8_t * addr) {
+			return reinterpret_cast<return_type*>(addr + offset);
+		}
+
+	};
+
+	template<typename T>
+	struct spec<T, none> {
+		using type = T;
+		enum : uint64_t { offset = 0ul };
+
+		using return_type = typename _return<std::is_base_of<type_spec, T>::value, T>::type;
+		static return_type * get(uint8_t * addr) {
+			return reinterpret_cast<return_type*>(addr + offset);
+		}
+
+
+	};
+
 };
 
 
@@ -108,7 +172,7 @@ enum object_type_e {
 };
 
 enum dataset_layout_e {
-	UNDEF
+	UNDEFX
 };
 
 struct btree : public file_object {
@@ -237,28 +301,42 @@ struct _impl {
 using offset_type = typename get_type_for_size<SIZE_OF_OFFSET>::type;
 using length_type = typename get_type_for_size<SIZE_OF_LENGTH>::type;
 
-struct symbol_table_entry {
-	offset_type link_name_offset;
-	offset_type object_header_address;
-	uint32_t cache_type;
-	uint32_t reserved_0;
-	uint8_t scratch_pad_space[16];
-} __attribute__((packed));
+struct symbol_table_entry_spec : public type_spec {
 
-struct superblock_v0_part0 {
-	uint8_t signature[8];
-	uint8_t superblock_version;
-	uint8_t file_free_space_storage_version;
-	uint8_t root_group_symbol_table_entry_version;
-	uint8_t reserved_0;
-	uint8_t shared_header_message_format_version;
-	uint8_t size_of_offsets;
-	uint8_t size_of_length;
-	uint8_t reserved_1;
-	uint16_t group_leaf_node_K;
-	uint16_t group_internal_node_K;
-	uint32_t file_consistency_flags;
-} __attribute__((packed));
+	using link_name_offset            = spec<offset_type, none>;
+	using object_header_address       = spec<offset_type, link_name_offset>;
+	using cache_type                  = spec<uint32_t, object_header_address>;
+	using reserved_0                  = spec<uint32_t, cache_type>;
+	using scratch_pad_space           = spec<uint8_t[16], reserved_0>;
+
+	enum : uint64_t { size = last<scratch_pad_space>::size };
+
+};
+
+
+
+struct superblock_v0_spec : public type_spec {
+	using signature                                = spec<uint8_t[8], none>;
+	using superblock_version                       = spec<uint8_t, signature>;
+	using file_free_space_storage_version          = spec<uint8_t, superblock_version>;
+	using root_group_symbol_table_entry_version    = spec<uint8_t, file_free_space_storage_version>;
+	using reserved_0                               = spec<uint8_t, root_group_symbol_table_entry_version>;
+	using shared_header_message_format_version     = spec<uint8_t, reserved_0>;
+	using size_of_offsets                          = spec<uint8_t, shared_header_message_format_version>;
+	using size_of_length                           = spec<uint8_t, size_of_offsets>;
+	using reserved_1                               = spec<uint8_t, size_of_length>;
+	using group_leaf_node_K                        = spec<uint16_t, reserved_1>;
+	using group_internal_node_K                    = spec<uint16_t, group_leaf_node_K>;
+	using file_consistency_flags                   = spec<uint32_t, group_internal_node_K>;
+	using base_address                             = spec<offset_type, file_consistency_flags>;
+	using free_space_info_address                  = spec<offset_type, base_address>;
+	using end_of_file_address                      = spec<offset_type, free_space_info_address>;
+	using driver_information_address               = spec<offset_type, end_of_file_address>;
+	using root_group_symbol_table_entry            = spec<symbol_table_entry_spec, driver_information_address>;
+
+	enum : uint64_t { size = last<root_group_symbol_table_entry>::size };
+
+};
 
 
 struct superblock_v0_part1
@@ -380,6 +458,15 @@ struct local_heap_raw {
 	offset_type data_segment_address;
 };
 
+struct local_heap : public type_spec {
+	using signature                 = spec<uint8_t[4],   none>;
+	using version                   = spec<uint8_t,      signature>;
+	using reserved0                 = spec<uint8_t[3],   version>;
+	using data_segment_size         = spec<length_type,  reserved0>;
+	using offset_to_head_free_list  = spec<length_type,  data_segment_size>;
+	using data_segment_address      = spec<offset_type,  offset_to_head_free_list>;
+};
+
 
 static uint64_t get_minimum_storage_size_for(uint64_t count) {
 	if (count == 0) return 0;
@@ -392,31 +479,28 @@ static uint64_t get_minimum_storage_size_for(uint64_t count) {
 }
 
 struct superblock_v0 : public superblock {
-
-	superblock_v0_raw * _data() {
-		return reinterpret_cast<superblock_v0_raw*>(memory_addr);
-	}
+	using spec = superblock_v0_spec;
 
 	superblock_v0(uint8_t * data) { }
 
 	virtual int version() {
-		return _data()->superblock_version;
+		return *spec::superblock_version::get(memory_addr);
 	}
 
 	virtual int offset_size() {
-		return _data()->size_of_offsets;
+		return *spec::size_of_offsets::get(memory_addr);
 	}
 
 	virtual int length_size() {
-		return _data()->size_of_length;
+		return *spec::size_of_length::get(memory_addr);
 	}
 
 	virtual int group_leaf_node_K() {
-		return _data()->group_leaf_node_K;
+		return *spec::group_leaf_node_K::get(memory_addr);
 	}
 
 	virtual int group_internal_node_K() {
-		return _data()->group_internal_node_K;
+		return *spec::group_internal_node_K::get(memory_addr);
 	}
 
 	virtual int indexed_storage_internal_node_K() {
@@ -428,22 +512,22 @@ struct superblock_v0 : public superblock {
 	}
 
 	virtual uint64_t base_address() {
-		return _data()->base_address;
+		return *spec::base_address::get(memory_addr);
 	}
 
 	virtual uint64_t file_free_space_info_address() {
-		return _data()->base_address;
+		return *spec::free_space_info_address::get(memory_addr);
 	}
 	virtual uint64_t end_of_file_address() {
-		return _data()->end_of_file_address;
+		return *spec::end_of_file_address::get(memory_addr);
 	}
 
 	virtual uint64_t driver_information_address() {
-		return _data()->driver_information_address;
+		return *spec::driver_information_address::get(memory_addr);
 	}
 
 	virtual uint64_t root_node_object_address() {
-		return _data()->root_group_symbol_table_entry.object_header_address;
+		return *symbol_table_entry_spec::object_header_address::get(spec::root_group_symbol_table_entry::get(memory_addr));
 	}
 
 };
