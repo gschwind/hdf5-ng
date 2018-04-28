@@ -15,6 +15,7 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include <cstring>
+#include <cassert>
 
 #include <map>
 #include <string>
@@ -63,17 +64,22 @@ static _named_tuple_0 OFFSETX[4] = {
 		{OFFSET_V3_SIZE_OF_OFFSET, OFFSET_V3_SIZE_OF_LENGTH}
 };
 
+template<typename T>
+static uint64_t read_at(uint8_t * addr) {
+	return *reinterpret_cast<T*>(addr);
+}
+
 using data_reader_func = uint64_t (*)(uint8_t*);
 static inline data_reader_func get_reader_for(uint8_t size) {
 	switch(size) {
 	case 1:
-		return [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint8_t*>(addr); };
+		return read_at<uint8_t>;
 	case 2:
-		return [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint16_t*>(addr); };
+		return read_at<uint16_t>;
 	case 4:
-		return [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint32_t*>(addr); };
+		return read_at<uint32_t>;
 	case 8:
-		return [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint64_t*>(addr); };
+		return read_at<uint64_t>;
 	default:
 		return nullptr;
 	}
@@ -87,19 +93,19 @@ struct file_impl;
 
 struct file_object {
 	file_impl * file;
-	uint8_t *  memory_addr;
-	uint64_t   file_offset;
-	uint64_t   size;
+	uint8_t * memory_addr;
 
+	file_object() = delete;
+	file_object(file_impl * file, uint8_t * addr) : file{file}, memory_addr{addr} { }
 	virtual ~file_object() { }
 
-	uint8_t * base_addr() {
-		return memory_addr-file_offset;
-	}
+	uint8_t * base_addr();
 
 };
 
 struct superblock : public file_object {
+
+	superblock(file_impl * file, uint8_t * addr) : file_object{file, addr} {}
 
 	virtual ~superblock() = default;
 
@@ -141,30 +147,30 @@ struct btree : public file_object {
 //  - dataset
 //  - group
 struct object : public file_object {
-	enum object_type_e type; // store the guessed real type.
-
-	// dataset message
-	vector<uint64_t> shape;
-	vector<uint64_t> shape_max;
-	vector<uint64_t> permutation; // never been implemented.
-
-	dataset_layout_e dset_layout;
-	uint64_t data_offset;
-
-	// link info message
-	uint64_t maximum_creation_index;
-	uint64_t fractal_heap;
-	uint64_t btree_v2_address;
-	uint64_t create_order_btree_address;
-
-	// Datatype
-	uint64_t type_size;
-
-	// fillvalue
-	vector<uint8_t> fillvalue_data;
-
-	// Link Messages
-	list<void*> link_list;
+//	enum object_type_e type; // store the guessed real type.
+//
+//	// dataset message
+//	vector<uint64_t> shape;
+//	vector<uint64_t> shape_max;
+//	vector<uint64_t> permutation; // never been implemented.
+//
+//	dataset_layout_e dset_layout;
+//	uint64_t data_offset;
+//
+//	// link info message
+//	uint64_t maximum_creation_index;
+//	uint64_t fractal_heap;
+//	uint64_t btree_v2_address;
+//	uint64_t create_order_btree_address;
+//
+//	// Datatype
+//	uint64_t type_size;
+//
+//	// fillvalue
+//	vector<uint8_t> fillvalue_data;
+//
+//	// Link Messages
+//	list<void*> link_list;
 
 	// DataStorage
 	// TODO
@@ -179,24 +185,28 @@ struct object : public file_object {
 	// Only used for chunked dataset.
 
 	// Attrubute message
-	map<string, vector<uint8_t>> attributes;
+//	map<string, vector<uint8_t>> attributes;
 
 	// Comments
 	// TODO
 
 	// object modification time
 
-
+	object(file_impl * file, uint8_t * addr) : file_object{file, addr} { }
 
 	virtual ~object() = default;
-	virtual int version() = 0;
 
 };
 
 struct local_heap : public file_object {
 
 	virtual ~local_heap() = default;
+
 	virtual int version() = 0;
+
+	virtual char const * get_data(uint64_t offset) {
+		return nullptr;
+	}
 
 };
 
@@ -239,36 +249,6 @@ using offset_type = typename get_type_for_size<SIZE_OF_OFFSET>::type;
 using length_type = typename get_type_for_size<SIZE_OF_LENGTH>::type;
 
 
-
-struct object_header_v1 {
-	uint8_t version;
-	uint8_t reserved_0;
-	uint16_t total_number_of_header_message;
-	uint32_t reference_count;
-	uint32_t header_size;
-} __attribute__((packed));
-
-struct message_header_v1 {
-	uint16_t type;
-	uint16_t size_of_message;
-	uint8_t flags;
-	uint8_t reserved[3];
-} __attribute__((packed));
-
-struct object_header_v2 {
-	uint32_t signature;
-	uint8_t version;
-	uint8_t flags;
-	// Optional fields
-} __attribute__((packed));
-
-struct message_header_v2 {
-	uint8_t type;
-	uint16_t size_of_message_data;
-	uint8_t flags;
-	// optional fields
-};
-
 static uint64_t get_minimum_storage_size_for(uint64_t count) {
 	if (count == 0) return 0;
 	uint64_t n = 1;
@@ -282,26 +262,26 @@ static uint64_t get_minimum_storage_size_for(uint64_t count) {
 struct superblock_v0 : public superblock {
 	using spec = typename spec_defs::superblock_v0_spec;
 
-	superblock_v0(uint8_t * data) { }
+	superblock_v0(file_impl * file, uint8_t * addr) : superblock{file, addr} { }
 
 	virtual int version() {
-		return *spec::superblock_version::get(memory_addr);
+		return spec::superblock_version::get(memory_addr);
 	}
 
 	virtual int offset_size() {
-		return *spec::size_of_offsets::get(memory_addr);
+		return spec::size_of_offsets::get(memory_addr);
 	}
 
 	virtual int length_size() {
-		return *spec::size_of_length::get(memory_addr);
+		return spec::size_of_length::get(memory_addr);
 	}
 
 	virtual int group_leaf_node_K() {
-		return *spec::group_leaf_node_K::get(memory_addr);
+		return spec::group_leaf_node_K::get(memory_addr);
 	}
 
 	virtual int group_internal_node_K() {
-		return *spec::group_internal_node_K::get(memory_addr);
+		return spec::group_internal_node_K::get(memory_addr);
 	}
 
 	virtual int indexed_storage_internal_node_K() {
@@ -313,22 +293,22 @@ struct superblock_v0 : public superblock {
 	}
 
 	virtual uint64_t base_address() {
-		return *spec::base_address::get(memory_addr);
+		return spec::base_address::get(memory_addr);
 	}
 
 	virtual uint64_t file_free_space_info_address() {
-		return *spec::free_space_info_address::get(memory_addr);
+		return spec::free_space_info_address::get(memory_addr);
 	}
 	virtual uint64_t end_of_file_address() {
-		return *spec::end_of_file_address::get(memory_addr);
+		return spec::end_of_file_address::get(memory_addr);
 	}
 
 	virtual uint64_t driver_information_address() {
-		return *spec::driver_information_address::get(memory_addr);
+		return spec::driver_information_address::get(memory_addr);
 	}
 
 	virtual uint64_t root_node_object_address() {
-		return *spec_defs::symbol_table_entry_spec::object_header_address::get(spec::root_group_symbol_table_entry::get(memory_addr));
+		return spec_defs::symbol_table_entry_spec::object_header_address::get(&spec::root_group_symbol_table_entry::get(memory_addr));
 	}
 
 };
@@ -336,26 +316,26 @@ struct superblock_v0 : public superblock {
 struct superblock_v1 : public superblock {
 	using spec = typename spec_defs::superblock_v1_spec;
 
-	superblock_v1(uint8_t * data) { this->memory_addr = data; }
+	superblock_v1(file_impl * file, uint8_t * addr) : superblock{file, addr} { }
 
 	virtual int version() {
-		return *spec::superblock_version::get(memory_addr);
+		return spec::superblock_version::get(memory_addr);
 	}
 
 	virtual int offset_size() {
-		return *spec::size_of_offsets::get(memory_addr);
+		return spec::size_of_offsets::get(memory_addr);
 	}
 
 	virtual int length_size() {
-		return *spec::size_of_length::get(memory_addr);
+		return spec::size_of_length::get(memory_addr);
 	}
 
 	virtual int group_leaf_node_K() {
-		return *spec::group_leaf_node_K::get(memory_addr);
+		return spec::group_leaf_node_K::get(memory_addr);
 	}
 
 	virtual int group_internal_node_K() {
-		return *spec::group_internal_node_K::get(memory_addr);
+		return spec::group_internal_node_K::get(memory_addr);
 	}
 
 	virtual int indexed_storage_internal_node_K() {
@@ -367,22 +347,22 @@ struct superblock_v1 : public superblock {
 	}
 
 	virtual uint64_t base_address() {
-		return *spec::base_address::get(memory_addr);
+		return spec::base_address::get(memory_addr);
 	}
 
 	virtual uint64_t file_free_space_info_address() {
-		return *spec::base_address::get(memory_addr);
+		return spec::base_address::get(memory_addr);
 	}
 	virtual uint64_t end_of_file_address() {
-		return *spec::end_of_file_address::get(memory_addr);
+		return spec::end_of_file_address::get(memory_addr);
 	}
 
 	virtual uint64_t driver_information_address() {
-		return *spec::driver_information_address::get(memory_addr);
+		return spec::driver_information_address::get(memory_addr);
 	}
 
 	virtual uint64_t root_node_object_address() {
-		return *spec_defs::symbol_table_entry_spec::object_header_address::get(spec::root_group_symbol_table_entry::get(memory_addr));
+		return spec_defs::symbol_table_entry_spec::object_header_address::get(&spec::root_group_symbol_table_entry::get(memory_addr));
 	}
 
 };
@@ -390,18 +370,18 @@ struct superblock_v1 : public superblock {
 struct superblock_v2 : public superblock {
 	using spec = typename spec_defs::superblock_v2_spec;
 
-	superblock_v2(uint8_t * data) { this->memory_addr = data; }
+	superblock_v2(file_impl * file, uint8_t * addr) : superblock{file, addr} { }
 
 	virtual int version() {
-		return *spec::superblock_version::get(memory_addr);
+		return spec::superblock_version::get(memory_addr);
 	}
 
 	virtual int offset_size() {
-		return *spec::size_of_offsets::get(memory_addr);
+		return spec::size_of_offsets::get(memory_addr);
 	}
 
 	virtual int length_size() {
-		return *spec::size_of_length::get(memory_addr);
+		return spec::size_of_length::get(memory_addr);
 	}
 
 	virtual int group_leaf_node_K() {
@@ -421,14 +401,14 @@ struct superblock_v2 : public superblock {
 	}
 
 	virtual uint64_t base_address() {
-		return *spec::base_address::get(memory_addr);
+		return spec::base_address::get(memory_addr);
 	}
 
 	virtual uint64_t file_free_space_info_address() {
-		return *spec::base_address::get(memory_addr);
+		return spec::base_address::get(memory_addr);
 	}
 	virtual uint64_t end_of_file_address() {
-		return *spec::end_of_file_address::get(memory_addr);
+		return spec::end_of_file_address::get(memory_addr);
 	}
 
 	virtual uint64_t driver_information_address() {
@@ -436,28 +416,25 @@ struct superblock_v2 : public superblock {
 	}
 
 	virtual uint64_t root_node_object_address() {
-		return *spec::root_group_object_header_address::get(memory_addr);
+		return spec::root_group_object_header_address::get(memory_addr);
 	}
 };
 
 struct superblock_v3 : public superblock {
 	using spec = typename spec_defs::superblock_v3_spec;
 
-	superblock_v3(uint8_t * data) {
-		memory_addr = data;
-		size = spec_defs::superblock_v3_spec::size;
-	}
+	superblock_v3(file_impl * file, uint8_t * addr) : superblock{file, addr} { }
 
 	virtual int version() {
-		return *spec::superblock_version::get(memory_addr);
+		return spec::superblock_version::get(memory_addr);
 	}
 
 	virtual int offset_size() {
-		return *spec::size_of_offsets::get(memory_addr);
+		return spec::size_of_offsets::get(memory_addr);
 	}
 
 	virtual int length_size() {
-		return *spec::size_of_length::get(memory_addr);
+		return spec::size_of_length::get(memory_addr);
 	}
 
 	virtual int group_leaf_node_K() {
@@ -477,14 +454,14 @@ struct superblock_v3 : public superblock {
 	}
 
 	virtual uint64_t base_address() {
-		return *spec::base_address::get(memory_addr);
+		return spec::base_address::get(memory_addr);
 	}
 
 	virtual uint64_t file_free_space_info_address() {
-		return *spec::base_address::get(memory_addr);
+		return spec::base_address::get(memory_addr);
 	}
 	virtual uint64_t end_of_file_address() {
-		return *spec::end_of_file_address::get(memory_addr);
+		return spec::end_of_file_address::get(memory_addr);
 	}
 
 	virtual uint64_t driver_information_address() {
@@ -492,7 +469,7 @@ struct superblock_v3 : public superblock {
 	}
 
 	virtual uint64_t root_node_object_address() {
-		return *spec::root_group_object_header_address::get(memory_addr);
+		return spec::root_group_object_header_address::get(memory_addr);
 	}
 };
 
@@ -613,29 +590,68 @@ struct group_btree_v2 : public file_object {
 
 };
 
+struct object_v1 : public object {
+	using spec = typename spec_defs::object_header_v1_spec;
 
-
-struct local_heap : public file_object {
-	uint8_t * get_data(uint64_t offset) {
-		return memory_addr[offset];
-	}
-};
-
-struct object_v1 : public file_object {
 	uint64_t K;
 	shared_ptr<local_heap> lheap;
 	offset_type btree_root;
 
-	uint8_t * parse_message(uint8_t * current_message) {
-		//uint8_t * current_message = &memory_addr[sizeof(object_header_v1)];
-		auto message_header = reinterpret_cast<message_header_v1*>(current_message);
+	object_v1(file_impl * file, uint8_t * addr) : object{file, addr} {
+		uint64_t msg_count = spec::total_number_of_header_message::get(memory_addr);
+		uint8_t * msg = &memory_addr[spec::size];
 
-		switch(message_header->type) {
-		//TODO: dispatch type
+		while(msg_count > 0) {
+			msg = parse_message(msg);
+			--msg_count;
+		}
+
+	}
+
+	virtual ~object_v1() { }
+
+	uint8_t * parse_message(uint8_t * current_message) {
+		uint8_t message_type = spec_defs::message_header_v1_spec::type::get(current_message);
+		cout << "found mesage <@" << current_message << " type = " << message_type << ">" << endl;
+
+		switch(message_type) {
+		case 1:
+			break;
+		case 2:
+			break;
+		case 3:
+			break;
+		case 4:
+			break;
+		case 5:
+			break;
+		case 6:
+			break;
+		case 7:
+			break;
+		case 8:
+			break;
+		case 9:
+			break;
+		case 10:
+			break;
+		case 11:
+			break;
+		case 12:
+			break;
+		case 13:
+			break;
+		case 14:
+			break;
+		case 15:
+			break;
 		}
 
 		// next message
-		return current_message + sizeof(message_header_v1) + message_header->size;
+		return current_message
+				+ spec_defs::message_header_v1_spec::size
+				+ spec_defs::message_header_v1_spec::size_of_message::get(current_message);
+
 	}
 
 	shared_ptr<object> find_object(char const * key) {
@@ -664,6 +680,138 @@ struct object_v1 : public file_object {
 
 };
 
+
+struct object_v2 : public object {
+	using spec = typename spec_defs::object_header_v2_spec;
+
+	object_v2(file_impl * file, uint8_t * addr) : object{file, addr} {
+		uint64_t data_size = size_of_chunk();
+		uint8_t * msg = first_message();
+
+		uint8_t * end = (first_message()+data_size);
+		while(msg < end) {
+			msg = parse_message(msg);
+		}
+
+	}
+
+	virtual ~object_v2() { }
+
+	uint8_t get_size_of_size_of_chunk() {
+		return 0x03u&spec::flags::get(memory_addr);
+	}
+
+	bool is_attribute_creation_order_tracked() {
+		return (0x01<<2)&spec::flags::get(memory_addr);
+	}
+
+	bool is_attribute_creation_order_indexed() {
+		return (0x01<<3)&spec::flags::get(memory_addr);
+	}
+
+	bool is_non_default_attribute_storage_phase_change_stored() {
+		return (0x01<<4)&spec::flags::get(memory_addr);
+	}
+
+	bool has_times_field() {
+		return (0x01<<5)&spec::flags::get(memory_addr);
+	}
+
+	uint32_t access_time() {
+		assert(has_times_field());
+		return read_at<uint32_t>(memory_addr + spec::size + 0);
+	}
+
+	uint32_t modification_time() {
+		assert(has_times_field());
+		return read_at<uint32_t>(memory_addr + spec::size + 4);
+	}
+
+	uint32_t change_time() {
+		assert(has_times_field());
+		return read_at<uint32_t>(memory_addr + spec::size + 8);
+	}
+
+	uint32_t birth_time() {
+		assert(has_times_field());
+		return read_at<uint32_t>(memory_addr + spec::size + 12);
+	}
+
+	uint16_t maximum_compact_attribute_count() {
+		assert(is_non_default_attribute_storage_phase_change_stored());
+		return read_at<uint16_t>(memory_addr + spec::size + (has_times_field()?16:0) + 0);
+	}
+
+	uint16_t minimum_compact_attribute_count() {
+		assert(is_non_default_attribute_storage_phase_change_stored());
+		return read_at<uint16_t>(memory_addr + spec::size + (has_times_field()?16:0) + 2);
+	}
+
+	uint8_t * first_message() {
+		return memory_addr
+				+ spec::size
+				+ (has_times_field()?16:0)
+				+ (is_non_default_attribute_storage_phase_change_stored()?4:0)
+				+ get_size_of_size_of_chunk();
+	}
+
+	uint64_t size_of_chunk() {
+		uint8_t * addr = memory_addr
+				+ spec::size
+				+ (has_times_field()?16:0)
+				+ (is_non_default_attribute_storage_phase_change_stored()?4:0);
+		return get_reader_for(get_size_of_size_of_chunk())(addr);
+	}
+
+	uint8_t * parse_message(uint8_t * current_message) {
+		uint8_t message_type = spec_defs::message_header_v2_spec::type::get(current_message);
+		cout << "found mesage <@" << current_message << " type = " << message_type << ">" << endl;
+
+		switch(message_type) {
+		case 1:
+			break;
+		case 2:
+			break;
+		case 3:
+			break;
+		case 4:
+			break;
+		case 5:
+			break;
+		case 6:
+			break;
+		case 7:
+			break;
+		case 8:
+			break;
+		case 9:
+			break;
+		case 10:
+			break;
+		case 11:
+			break;
+		case 12:
+			break;
+		case 13:
+			break;
+		case 14:
+			break;
+		case 15:
+			break;
+		}
+
+		// next message
+		return current_message
+				+ spec_defs::message_header_v2_spec::size
+				+ (is_attribute_creation_order_tracked()?2:0)
+				+ spec_defs::message_header_v2_spec::size_of_message_data::get(current_message);
+
+	}
+
+};
+
+
+
 struct file_impl : public h5ng::file_impl {
 	mutable map<uint64_t, shared_ptr<superblock>> superblock_cache;
 	mutable map<uint64_t, shared_ptr<object>> object_cache;
@@ -682,30 +830,25 @@ struct file_impl : public h5ng::file_impl {
 
 	}
 
-	virtual auto make_superblock(uint64_t offset) -> shared_ptr<superblock> {
+	virtual auto make_superblock(uint64_t offset) -> shared_ptr<superblock>
+	{
 		auto x = superblock_cache.find(offset);
 		if (x != superblock_cache.end())
 			return dynamic_pointer_cast<superblock>(x->second);
 
-		shared_ptr<superblock> ret;
 		switch(version) {
 		case 0:
-			ret = make_shared<superblock_v0>(&data[offset]);
-			break;
+			return superblock_cache[offset] = make_shared<superblock_v0>(this, &data[offset]);
 		case 1:
-			ret = make_shared<superblock_v1>(&data[offset]);
-			break;
+			return superblock_cache[offset] = make_shared<superblock_v1>(this, &data[offset]);
 		case 2:
-			ret = make_shared<superblock_v2>(&data[offset]);
-			break;
+			return superblock_cache[offset] = make_shared<superblock_v2>(this, &data[offset]);
 		case 3:
-			ret = make_shared<superblock_v3>(&data[offset]);
-			break;
+			return superblock_cache[offset] = make_shared<superblock_v3>(this, &data[offset]);
 		}
-		if(not ret)
-			throw runtime_error("TODO" STR(__LINE__));
-		superblock_cache[offset] = ret;
-		return ret;
+
+		throw runtime_error("TODO" STR(__LINE__));
+
 	}
 
 	shared_ptr<superblock> get_superblock() {
@@ -715,11 +858,11 @@ struct file_impl : public h5ng::file_impl {
 	virtual auto make_object(uint64_t offset) -> shared_ptr<object> {
 		auto x = object_cache.find(offset);
 		if (x != object_cache.end())
-			return dynamic_pointer_cast<object>(x->second);
+			return x->second;
 
 		int version = data[offset+OFFSET_V1_OBJECT_HEADER_VERSION];
 		if (version == 1) {
-			// TODO v1
+			return (object_cache[offset] = make_shared<object_v1>(this, &data[offset]));
 		} else if (version == 'O') {
 			uint32_t sign = *reinterpret_cast<uint32_t*>(&data[offset]);
 			if (sign != 0x5244484ful)
@@ -727,9 +870,10 @@ struct file_impl : public h5ng::file_impl {
 			version = data[offset+OFFSET_V2_OBJECT_HEADER_VERSION];
 			if (version != 2)
 				throw runtime_error("TODO " STR(__LINE__));
-			// TODO v2
+			return (object_cache[offset] = make_shared<object_v2>(this, &data[offset]));
 		}
-		return ret;
+
+		throw runtime_error("TODO " STR(__LINE__));
 	}
 
 
@@ -793,6 +937,12 @@ auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::group_btree_v2_node<record_type>::ge
 	return *reinterpret_cast<offset_type*>(&memory_addr[spec::size+i*(root->record_size()+size_of_number_of_child_node+size_of_total_number_of_child_node)+root->record_size()+size_of_number_of_child_node]);
 }
 
+auto file_object::base_addr() -> uint8_t *
+{
+	return nullptr;
+}
+
+
 struct superblock;
 
 template<int ... ARGS>
@@ -842,31 +992,30 @@ struct h5obj;
 
 struct _h5obj {
 
-//	_h5obj();
-//	_h5obj(H5O_type_t const & type, hid_t id);
-//
-//	virtual ~_h5obj() { }
-//
-//	_h5obj(_h5obj const &) = delete;
-//	_h5obj & operator=(_h5obj const &) = delete;
-//
-//	template<typename T, typename ... ARGS>
-//	T * read(ARGS ... args) const;
-//
-//	template<typename T>
-//	T read_attribute(string const & name) const;
-//
-//	h5obj operator[](string name) const;
-//
-//	template<typename T> struct _attr;
-//
-//	virtual vector<size_t> const & shape() const {
-//		throw runtime_error("No shape() implemented");
-//	}
-//
-//	virtual size_t const & shape(int i) const {
-//		throw runtime_error("No shape() implemented");
-//	}
+	_h5obj() = default;
+
+	virtual ~_h5obj() { }
+
+	_h5obj(_h5obj const &) = delete;
+	_h5obj & operator=(_h5obj const &) = delete;
+
+	template<typename T, typename ... ARGS>
+	T * read(ARGS ... args) const;
+
+	template<typename T>
+	T read_attribute(string const & name) const;
+
+	h5obj operator[](string name) const;
+
+	template<typename T> struct _attr;
+
+	virtual vector<size_t> const & shape() const {
+		throw runtime_error("No shape() implemented");
+	}
+
+	virtual size_t const & shape(int i) const {
+		throw runtime_error("No shape() implemented");
+	}
 
 };
 
@@ -956,7 +1105,8 @@ struct _h5file : public _h5obj {
 		yeach = _for_each0<2,4,8>::create(data, version, superblock_offset, size_of_offset, size_of_length);
 	}
 
-	virtual ~_h5file();
+	virtual ~_h5file() = default;
+
 };
 
 
@@ -969,49 +1119,53 @@ public:
 	h5obj & operator=(h5obj const &) = default;
 	h5obj(shared_ptr<_h5obj> const & x) : _ptr{x} { }
 
-	h5obj(string const & filename);
-	~h5obj();
-
-	template<typename T, typename ... ARGS>
-	T * read(ARGS ... args) const {
-		return _ptr->read<T>(args...);
+	h5obj(string const & filename) {
+		_ptr = make_shared<_h5file>(filename);
 	}
 
-	template<typename T>
-	T read_attribute(string const & name) const {
-		return _ptr->read_attribute<T>(name);
-	}
+	virtual ~h5obj() = default;
 
-	h5obj operator[](string const & name) const {
-		return _ptr->operator [](name);
-	}
 
-	vector<size_t> const & shape() const {
-		return _ptr->shape();
-	}
-
-	size_t const & shape(int i) const {
-		return _ptr->shape(i);
-	}
+//	template<typename T, typename ... ARGS>
+//	T * read(ARGS ... args) const {
+//		return _ptr->read<T>(args...);
+//	}
+//
+//	template<typename T>
+//	T read_attribute(string const & name) const {
+//		return _ptr->read_attribute<T>(name);
+//	}
+//
+//	h5obj operator[](string const & name) const {
+//		return _ptr->operator [](name);
+//	}
+//
+//	vector<size_t> const & shape() const {
+//		return _ptr->shape();
+//	}
+//
+//	size_t const & shape(int i) const {
+//		return _ptr->shape(i);
+//	}
 
 };
 
-template<typename T>
-struct _h5obj::_attr {
-	static T read(_h5obj const & obj, string const & name) {
-		hid_t attr = H5Aopen(obj.id, name.c_str(), H5P_DEFAULT);
-		if(attr < 0)
-			throw runtime_error("invalid attribute");
-		hid_t aspc = H5Aget_space(attr);
-		hsize_t size = H5Aget_storage_size(attr);
-		/* TODO: check for type matching */
-		if ((size%sizeof(T)) != 0)
-			throw runtime_error("invalid attribute type or size");
-		vector<T> ret{size/sizeof(T), vector<char>::allocator_type()};
-		H5Aread(attr, h5type<T>::type(), &ret[0]);
-		return ret[0];
-	}
-};
+//template<typename T>
+//struct _h5obj::_attr {
+//	static T read(_h5obj const & obj, string const & name) {
+//		hid_t attr = H5Aopen(obj.id, name.c_str(), H5P_DEFAULT);
+//		if(attr < 0)
+//			throw runtime_error("invalid attribute");
+//		hid_t aspc = H5Aget_space(attr);
+//		hsize_t size = H5Aget_storage_size(attr);
+//		/* TODO: check for type matching */
+//		if ((size%sizeof(T)) != 0)
+//			throw runtime_error("invalid attribute type or size");
+//		vector<T> ret{size/sizeof(T), vector<char>::allocator_type()};
+//		H5Aread(attr, h5type<T>::type(), &ret[0]);
+//		return ret[0];
+//	}
+//};
 
 } // hdf5ng
 

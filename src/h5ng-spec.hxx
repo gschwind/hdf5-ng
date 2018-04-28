@@ -53,8 +53,8 @@ struct type_spec {
 		enum : uint64_t { offset = PREV::offset + _sizeof<prev_is_typespec, typename PREV::type>::value };
 
 		using return_type = typename _return<is_base_of<type_spec, T>::value, T>::type;
-		static return_type * get(uint8_t * addr) {
-			return reinterpret_cast<return_type*>(addr + offset);
+		static return_type & get(uint8_t * addr) {
+			return *reinterpret_cast<return_type*>(addr + offset);
 		}
 
 	};
@@ -65,8 +65,8 @@ struct type_spec {
 		enum : uint64_t { offset = 0ul };
 
 		using return_type = typename _return<std::is_base_of<type_spec, T>::value, T>::type;
-		static return_type * get(uint8_t * addr) {
-			return reinterpret_cast<return_type*>(addr + offset);
+		static return_type & get(uint8_t * addr) {
+			return *reinterpret_cast<return_type*>(addr + offset);
 		}
 
 
@@ -229,33 +229,39 @@ struct b_tree_v2_node_spec : public type_spec {
 	// variable size;
 } __attribute__((packed));
 
-struct object_header_v1 {
-	uint8_t version;
-	uint8_t reserved_0;
-	uint16_t total_number_of_header_message;
-	uint32_t reference_count;
-	uint32_t header_size;
-} __attribute__((packed));
+struct object_header_v1_spec : public type_spec {
+	using version                             = spec<uint8_t,  none>;
+	using reserved_0                          = spec<uint8_t,  version>;
+	using total_number_of_header_message      = spec<uint16_t, reserved_0>;
+	using reference_count                     = spec<uint32_t, total_number_of_header_message>;
+	using header_size                         = spec<uint32_t, reference_count>;
 
-struct message_header_v1 {
-	uint16_t type;
-	uint16_t size_of_message;
-	uint8_t flags;
-	uint8_t reserved[3];
-} __attribute__((packed));
+	enum : uint64_t { size = last<header_size>::size };
+};
 
-struct object_header_v2 {
-	uint32_t signature;
-	uint8_t version;
-	uint8_t flags;
+struct message_header_v1_spec : public type_spec {
+	using type                           = spec<uint16_t,    none>;
+	using size_of_message                = spec<uint16_t,    type>;
+	using flags                          = spec<uint8_t,     size_of_message>;
+	using reserved                       = spec<uint8_t[3],  flags>;
+
+	enum : uint64_t { size = last<reserved>::size };
+};
+
+struct object_header_v2_spec : public type_spec {
+	using signature               = spec<uint8_t[4], none>;
+	using version                 = spec<uint8_t, signature>;
+	using flags                   = spec<uint8_t, version>;
 	// Optional fields
-} __attribute__((packed));
+	enum : uint64_t { size = last<flags>::size };
+};
 
-struct message_header_v2 {
-	uint8_t type;
-	uint16_t size_of_message_data;
-	uint8_t flags;
+struct message_header_v2_spec : public type_spec {
+	using type                       = spec<uint8_t,  none>;
+	using size_of_message_data       = spec<uint16_t, type>;
+	using flags                      = spec<uint8_t,  size_of_message_data>;
 	// optional fields
+	enum : uint64_t { size = last<flags>::size };
 };
 
 // Layout: Version 2 B-tree, Type 1 Record Layout - Indirectly Accessed, Non-filtered, ‘Huge’ Fractal Heap Objects
@@ -301,10 +307,13 @@ struct btree_v2_record_type4 : public type_spec {
 };
 
 // Layout: Version 2 B-tree, Type 5 Record Layout - Link Name for Indexed Group
-struct btree_v2_record_type5 {
-	uint32_t hash;
-	uint8_t id[7];
-} __attribute__((packed));
+struct btree_v2_record_type5 : public type_spec {
+	using hash              = spec<uint32_t,   none>;
+	using id                = spec<uint8_t[7], hash>;
+
+	enum : uint64_t { size = last<id>::size };
+
+};
 
 // Layout: Version 2 B-tree, Type 6 Record Layout - Creation Order for Indexed Group
 struct btree_v2_record_type6 {
