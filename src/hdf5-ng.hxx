@@ -103,6 +103,11 @@ struct file_object {
 
 };
 
+struct superblock;
+struct object;
+struct local_heap;
+struct global_heap;
+
 struct superblock : public file_object {
 
 	superblock(file_impl * file, uint8_t * addr) : file_object{file, addr} {}
@@ -121,6 +126,8 @@ struct superblock : public file_object {
 	virtual uint64_t end_of_file_address() = 0;
 	virtual uint64_t driver_information_address() = 0;
 	virtual uint64_t root_node_object_address() = 0;
+
+	virtual shared_ptr<object> get_root_object() = 0;
 
 };
 
@@ -239,6 +246,9 @@ struct file_impl {
 	virtual auto make_object(uint64_t offset) -> shared_ptr<object> = 0;
 	virtual auto make_local_heap(uint64_t offset) -> shared_ptr<local_heap> = 0;
 	virtual auto make_global_heap(uint64_t offset) -> shared_ptr<global_heap> = 0;
+
+	virtual auto to_address(uint64_t offset) -> uint8_t * = 0;
+	virtual auto to_offset(uint8_t * address) -> uint64_t = 0;
 };
 
 template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH>
@@ -311,6 +321,10 @@ struct superblock_v0 : public superblock {
 		return spec_defs::symbol_table_entry_spec::object_header_address::get(&spec::root_group_symbol_table_entry::get(memory_addr));
 	}
 
+	virtual shared_ptr<object> get_root_object() {
+		return file->make_object(root_node_object_address());
+	}
+
 };
 
 struct superblock_v1 : public superblock {
@@ -363,6 +377,10 @@ struct superblock_v1 : public superblock {
 
 	virtual uint64_t root_node_object_address() {
 		return spec_defs::symbol_table_entry_spec::object_header_address::get(&spec::root_group_symbol_table_entry::get(memory_addr));
+	}
+
+	virtual shared_ptr<object> get_root_object() {
+		return file->make_object(root_node_object_address());
 	}
 
 };
@@ -418,6 +436,11 @@ struct superblock_v2 : public superblock {
 	virtual uint64_t root_node_object_address() {
 		return spec::root_group_object_header_address::get(memory_addr);
 	}
+
+	virtual shared_ptr<object> get_root_object() {
+		return file->make_object(root_node_object_address());
+	}
+
 };
 
 struct superblock_v3 : public superblock {
@@ -471,6 +494,11 @@ struct superblock_v3 : public superblock {
 	virtual uint64_t root_node_object_address() {
 		return spec::root_group_object_header_address::get(memory_addr);
 	}
+
+	virtual shared_ptr<object> get_root_object() {
+		return file->make_object(root_node_object_address());
+	}
+
 };
 
 struct group_btree_v1 : public file_object {
@@ -597,11 +625,30 @@ struct object_v1 : public object {
 	shared_ptr<local_heap> lheap;
 	offset_type btree_root;
 
-	object_v1(file_impl * file, uint8_t * addr) : object{file, addr} {
-		uint64_t msg_count = spec::total_number_of_header_message::get(memory_addr);
-		uint8_t * msg = &memory_addr[spec::size];
+	uint8_t * first_message() {
+		uint64_t first_message_offset = file->to_offset(&memory_addr[spec::size]);
 
-		while(msg_count > 0) {
+		// message in v1 are aligned, compute alignment to 8-bytes boundary
+		if (first_message_offset & 0x0000000000000007ul) {
+			first_message_offset &= ~0x0000000000000007ul;
+			first_message_offset += 0x0000000000000008ul;
+			return file->to_address(first_message_offset);
+		} else {
+			// already aligned;
+			return &memory_addr[spec::size];
+		}
+	}
+
+	object_v1(file_impl * file, uint8_t * addr) : object{file, addr} {
+		cout << "creating object v1, object cache size = TODO" << endl;
+
+		uint64_t msg_count = spec::total_number_of_header_message::get(memory_addr);
+		cout << "parsing "<< msg_count <<" messages" << endl;
+		cout << "object header size = " << spec::header_size::get(memory_addr) << endl;
+
+		uint8_t * msg = first_message();
+
+		while(msg_count > 0ul) {
 			msg = parse_message(msg);
 			--msg_count;
 		}
@@ -611,8 +658,13 @@ struct object_v1 : public object {
 	virtual ~object_v1() { }
 
 	uint8_t * parse_message(uint8_t * current_message) {
-		uint8_t message_type = spec_defs::message_header_v1_spec::type::get(current_message);
-		cout << "found mesage <@" << current_message << " type = " << message_type << ">" << endl;
+		uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
+		uint16_t message_size   = spec_defs::message_header_v1_spec::size_of_message::get(current_message);
+		uint8_t message_flags   = spec_defs::message_header_v1_spec::flags::get(current_message);
+		cout << "found mesage <@" << static_cast<void*>(current_message)
+				<< " type = " << static_cast<int>(message_type)
+				<< " size=" << message_size
+				<< " flags=" << std::hex << static_cast<int>(message_flags) << ">" << endl;
 
 		switch(message_type) {
 		case 1:
@@ -685,6 +737,8 @@ struct object_v2 : public object {
 	using spec = typename spec_defs::object_header_v2_spec;
 
 	object_v2(file_impl * file, uint8_t * addr) : object{file, addr} {
+		cout << "creating object v2, object cache size = TODO" << endl;
+
 		uint64_t data_size = size_of_chunk();
 		uint8_t * msg = first_message();
 
@@ -862,6 +916,7 @@ struct file_impl : public h5ng::file_impl {
 
 		int version = data[offset+OFFSET_V1_OBJECT_HEADER_VERSION];
 		if (version == 1) {
+			cout << "creating object at " << std::hex << offset << endl;
 			return (object_cache[offset] = make_shared<object_v1>(this, &data[offset]));
 		} else if (version == 'O') {
 			uint32_t sign = *reinterpret_cast<uint32_t*>(&data[offset]);
@@ -870,6 +925,7 @@ struct file_impl : public h5ng::file_impl {
 			version = data[offset+OFFSET_V2_OBJECT_HEADER_VERSION];
 			if (version != 2)
 				throw runtime_error("TODO " STR(__LINE__));
+			cout << "creating object at " << std::hex << offset << endl;
 			return (object_cache[offset] = make_shared<object_v2>(this, &data[offset]));
 		}
 
@@ -887,6 +943,14 @@ struct file_impl : public h5ng::file_impl {
 
 	virtual auto make_global_heap(uint64_t offset) -> shared_ptr<global_heap> {
 		throw runtime_error("TODO " STR(__LINE__));
+	}
+
+	virtual auto to_address(uint64_t offset) -> uint8_t * override {
+		return &data[offset];
+	}
+
+	virtual auto to_offset(uint8_t * address) -> uint64_t override {
+		return address-data;
 	}
 
 }; // struct _impl
@@ -1103,6 +1167,9 @@ struct _h5file : public _h5obj {
 		 * 2, 4, 8, 16 or 32. our implementation is limited to 2, 4 and 8 bytes, uint64_t
 		 */
 		yeach = _for_each0<2,4,8>::create(data, version, superblock_offset, size_of_offset, size_of_length);
+		auto sb = yeach->get_superblock();
+		auto root = sb->get_root_object();
+
 	}
 
 	virtual ~_h5file() = default;

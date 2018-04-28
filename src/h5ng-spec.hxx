@@ -43,7 +43,7 @@ struct type_spec {
 
 	template<typename T>
 	struct last {
-		enum : uint64_t { size = T::offset + _sizeof<is_base_of<type_spec, T>::value, T>::value };
+		enum : uint64_t { size = T::offset + _sizeof<is_base_of<type_spec, typename T::type>::value, typename T::type>::value };
 	};
 
 	template<typename T, typename PREV>
@@ -111,7 +111,15 @@ struct symbol_table_entry_spec : public type_spec {
 
 };
 
+// Layout: Object Header Scratch-pad Format
+struct object_header_scratch_pad_spec : public type_spec {
 
+	using b_tree_address            = spec<offset_type, none>;
+	using local_heap_address        = spec<offset_type, b_tree_address>;
+
+	enum : uint64_t { size = last<local_heap_address>::size };
+
+};
 
 struct superblock_v0_spec : public type_spec {
 	using signature                                = spec<uint8_t[8], none>;
@@ -262,6 +270,15 @@ struct message_header_v2_spec : public type_spec {
 	using flags                      = spec<uint8_t,  size_of_message_data>;
 	// optional fields
 	enum : uint64_t { size = last<flags>::size };
+};
+
+
+// Layout: Symbol Table Message #0x0011
+struct message_symbole_table_spec : public type_spec {
+	using b_tree_v1_address        = spec<offset_type,  none>;
+	using local_heap_address       = spec<offset_type, b_tree_v1_address>;
+	// optional fields
+	enum : uint64_t { size = last<local_heap_address>::size };
 };
 
 // Layout: Version 2 B-tree, Type 1 Record Layout - Indirectly Accessed, Non-filtered, ‘Huge’ Fractal Heap Objects
