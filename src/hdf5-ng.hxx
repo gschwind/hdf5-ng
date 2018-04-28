@@ -26,6 +26,8 @@
 #include <list>
 #include <type_traits>
 
+#include "h5ng-spec.hxx"
+
 #define STR(x) #x
 
 namespace h5ng {
@@ -61,69 +63,21 @@ static _named_tuple_0 OFFSETX[4] = {
 		{OFFSET_V3_SIZE_OF_OFFSET, OFFSET_V3_SIZE_OF_LENGTH}
 };
 
-template<typename T>
-static typename T::type * get_from_addr(uint8_t * addr) {
-	return reinterpret_cast<typename T::type*>(addr + T::offset);
+using data_reader_func = uint64_t (*)(uint8_t*);
+static inline data_reader_func get_reader_for(uint8_t size) {
+	switch(size) {
+	case 1:
+		return [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint8_t*>(addr); };
+	case 2:
+		return [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint16_t*>(addr); };
+	case 4:
+		return [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint32_t*>(addr); };
+	case 8:
+		return [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint64_t*>(addr); };
+	default:
+		return nullptr;
+	}
 }
-
-struct type_spec {
-
-	struct none;
-
-	// select if T derivate from type_spec, get the size diferently
-	template<bool B, typename T>
-	struct _sizeof {
-		enum : uint64_t { value = sizeof(T) };
-	};
-
-	template<typename T>
-	struct _sizeof<true, T> {
-		enum : uint64_t { value = T::size };
-	};
-
-	template<bool B, typename T>
-	struct _return {
-		using type = T;
-	};
-
-	template<typename T>
-	struct _return<true, T> {
-		using type = uint8_t;
-	};
-
-	template<typename T>
-	struct last {
-		enum : uint64_t { size = T::offset + _sizeof<is_base_of<type_spec, T>::value, T>::value };
-	};
-
-	template<typename T, typename PREV>
-	struct spec {
-		enum : bool { prev_is_typespec = std::is_base_of<type_spec, typename PREV::type>::value };
-		using type = T;
-		enum : uint64_t { offset = PREV::offset + _sizeof<prev_is_typespec, typename PREV::type>::value };
-
-		using return_type = typename _return<is_base_of<type_spec, T>::value, T>::type;
-		static return_type * get(uint8_t * addr) {
-			return reinterpret_cast<return_type*>(addr + offset);
-		}
-
-	};
-
-	template<typename T>
-	struct spec<T, none> {
-		using type = T;
-		enum : uint64_t { offset = 0ul };
-
-		using return_type = typename _return<std::is_base_of<type_spec, T>::value, T>::type;
-		static return_type * get(uint8_t * addr) {
-			return reinterpret_cast<return_type*>(addr + offset);
-		}
-
-
-	};
-
-};
-
 
 /*****************************************************
  * HIGH LEVEL API
@@ -210,7 +164,7 @@ struct object : public file_object {
 	vector<uint8_t> fillvalue_data;
 
 	// Link Messages
-	list<void> link_list;
+	list<void*> link_list;
 
 	// DataStorage
 	// TODO
@@ -277,147 +231,13 @@ struct file_impl {
 	virtual auto make_global_heap(uint64_t offset) -> shared_ptr<global_heap> = 0;
 };
 
-template<int I>
-struct get_type_for_size;
-
-template<>
-struct get_type_for_size<2> {
-	using type = uint16_t;
-};
-
-template<>
-struct get_type_for_size<4> {
-	using type = uint32_t;
-};
-
-template<>
-struct get_type_for_size<8> {
-	using type = uint32_t;
-};
-
-
 template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH>
 struct _impl {
+using spec_defs = typename h5ng::spec_defs<SIZE_OF_OFFSET, SIZE_OF_LENGTH>;
+
 using offset_type = typename get_type_for_size<SIZE_OF_OFFSET>::type;
 using length_type = typename get_type_for_size<SIZE_OF_LENGTH>::type;
 
-struct symbol_table_entry_spec : public type_spec {
-
-	using link_name_offset            = spec<offset_type, none>;
-	using object_header_address       = spec<offset_type, link_name_offset>;
-	using cache_type                  = spec<uint32_t, object_header_address>;
-	using reserved_0                  = spec<uint32_t, cache_type>;
-	using scratch_pad_space           = spec<uint8_t[16], reserved_0>;
-
-	enum : uint64_t { size = last<scratch_pad_space>::size };
-
-};
-
-
-
-struct superblock_v0_spec : public type_spec {
-	using signature                                = spec<uint8_t[8], none>;
-	using superblock_version                       = spec<uint8_t, signature>;
-	using file_free_space_storage_version          = spec<uint8_t, superblock_version>;
-	using root_group_symbol_table_entry_version    = spec<uint8_t, file_free_space_storage_version>;
-	using reserved_0                               = spec<uint8_t, root_group_symbol_table_entry_version>;
-	using shared_header_message_format_version     = spec<uint8_t, reserved_0>;
-	using size_of_offsets                          = spec<uint8_t, shared_header_message_format_version>;
-	using size_of_length                           = spec<uint8_t, size_of_offsets>;
-	using reserved_1                               = spec<uint8_t, size_of_length>;
-	using group_leaf_node_K                        = spec<uint16_t, reserved_1>;
-	using group_internal_node_K                    = spec<uint16_t, group_leaf_node_K>;
-	using file_consistency_flags                   = spec<uint32_t, group_internal_node_K>;
-	using base_address                             = spec<offset_type, file_consistency_flags>;
-	using free_space_info_address                  = spec<offset_type, base_address>;
-	using end_of_file_address                      = spec<offset_type, free_space_info_address>;
-	using driver_information_address               = spec<offset_type, end_of_file_address>;
-	using root_group_symbol_table_entry            = spec<symbol_table_entry_spec, driver_information_address>;
-
-	enum : uint64_t { size = last<root_group_symbol_table_entry>::size };
-
-};
-
-
-struct superblock_v0_part1
-{
-	offset_type base_address;
-	offset_type free_space_info_address;
-	offset_type end_of_file_address;
-	offset_type driver_information_address;
-	symbol_table_entry root_group_symbol_table_entry;
-} __attribute__((packed));
-
-struct superblock_v0_raw :
-		public superblock_v0_part0,
-		public superblock_v0_part1
-{
-
-} __attribute__((packed));
-
-using superblock_v1_part0 = superblock_v0_part0;
-
-struct superblock_v1_part1
-{
-	uint16_t indexed_storage_internal_node_K;
-	uint16_t reserved_2;
-} __attribute__((packed));
-
-using superblock_v1_part2 = superblock_v0_part1;
-
-struct superblock_v1_raw :
-		public superblock_v1_part0,
-		public superblock_v1_part1,
-		public superblock_v1_part2
-{
-
-} __attribute__((packed));
-
-struct superblock_v2_raw {
-	uint8_t signature[8];
-	uint8_t superblock_version;
-	uint8_t size_of_offsets;
-	uint8_t size_of_length;
-	uint8_t file_consistency_flags;
-	offset_type base_address;
-	offset_type superblock_extension_address;
-	offset_type end_of_file_address;
-	offset_type root_group_object_header_address;
-	uint32_t superblock_checksum;
-} __attribute__((packed));
-
-using superblock_v3_raw = superblock_v2_raw;
-
-struct b_tree_v1_part0 {
-	uint8_t signature[4];
-	uint8_t node_type;
-	uint8_t node_level;
-	uint16_t entries_used;
-	offset_type left_sibling_address;
-	offset_type right_sibling_address;
-	// TODO
-} __attribute__((packed));
-
-struct b_tree_v2_header {
-	uint8_t signature[4];
-	uint8_t version;
-	uint8_t type;
-	uint32_t node_size;
-	uint16_t record_size;
-	uint16_t depth;
-	uint8_t split_percent;
-	uint8_t merge_percent;
-	offset_type root_node_address;
-	uint16_t number_of_records_in_root_node;
-	length_type total_number_of_record_in_b_tree;
-	uint32_t checksum;
-} __attribute__((packed));
-
-struct b_tree_v2_node {
-	uint8_t signature[4];
-	uint8_t version;
-	uint8_t type;
-} __attribute__((packed));
 
 
 struct object_header_v1 {
@@ -449,25 +269,6 @@ struct message_header_v2 {
 	// optional fields
 };
 
-struct local_heap_raw {
-	uint8_t signature[4];
-	uint8_t version;
-	uint8_t reserved[3];
-	length_type data_segment_size;
-	length_type offset_to_head_free_list;
-	offset_type data_segment_address;
-};
-
-struct local_heap : public type_spec {
-	using signature                 = spec<uint8_t[4],   none>;
-	using version                   = spec<uint8_t,      signature>;
-	using reserved0                 = spec<uint8_t[3],   version>;
-	using data_segment_size         = spec<length_type,  reserved0>;
-	using offset_to_head_free_list  = spec<length_type,  data_segment_size>;
-	using data_segment_address      = spec<offset_type,  offset_to_head_free_list>;
-};
-
-
 static uint64_t get_minimum_storage_size_for(uint64_t count) {
 	if (count == 0) return 0;
 	uint64_t n = 1;
@@ -479,7 +280,7 @@ static uint64_t get_minimum_storage_size_for(uint64_t count) {
 }
 
 struct superblock_v0 : public superblock {
-	using spec = superblock_v0_spec;
+	using spec = typename spec_defs::superblock_v0_spec;
 
 	superblock_v0(uint8_t * data) { }
 
@@ -527,80 +328,80 @@ struct superblock_v0 : public superblock {
 	}
 
 	virtual uint64_t root_node_object_address() {
-		return *symbol_table_entry_spec::object_header_address::get(spec::root_group_symbol_table_entry::get(memory_addr));
+		return *spec_defs::symbol_table_entry_spec::object_header_address::get(spec::root_group_symbol_table_entry::get(memory_addr));
 	}
 
 };
 
 struct superblock_v1 : public superblock {
+	using spec = typename spec_defs::superblock_v1_spec;
+
 	superblock_v1(uint8_t * data) { this->memory_addr = data; }
 
-	superblock_v1_raw * _data() {
-		return reinterpret_cast<superblock_v1_raw*>(memory_addr);
-	}
-
 	virtual int version() {
-		return _data()->superblock_version;
+		return *spec::superblock_version::get(memory_addr);
 	}
 
 	virtual int offset_size() {
-		return _data()->size_of_offsets;
+		return *spec::size_of_offsets::get(memory_addr);
 	}
 
 	virtual int length_size() {
-		return _data()->size_of_length;
+		return *spec::size_of_length::get(memory_addr);
 	}
 
 	virtual int group_leaf_node_K() {
-		return _data()->group_leaf_node_K;
+		return *spec::group_leaf_node_K::get(memory_addr);
 	}
 
 	virtual int group_internal_node_K() {
-		return _data()->group_internal_node_K;
+		return *spec::group_internal_node_K::get(memory_addr);
 	}
 
 	virtual int indexed_storage_internal_node_K() {
 		return -1;
 	}
 
+	virtual int object_version() {
+		return -1;
+	}
+
 	virtual uint64_t base_address() {
-		return _data()->base_address;
+		return *spec::base_address::get(memory_addr);
 	}
 
 	virtual uint64_t file_free_space_info_address() {
-		return _data()->base_address;
+		return *spec::base_address::get(memory_addr);
 	}
 	virtual uint64_t end_of_file_address() {
-		return _data()->end_of_file_address;
+		return *spec::end_of_file_address::get(memory_addr);
 	}
 
 	virtual uint64_t driver_information_address() {
-		return _data()->driver_information_address;
+		return *spec::driver_information_address::get(memory_addr);
 	}
 
 	virtual uint64_t root_node_object_address() {
-		return _data()->root_group_symbol_table_entry.object_header_address;
+		return *spec_defs::symbol_table_entry_spec::object_header_address::get(spec::root_group_symbol_table_entry::get(memory_addr));
 	}
 
 };
 
 struct superblock_v2 : public superblock {
+	using spec = typename spec_defs::superblock_v2_spec;
+
 	superblock_v2(uint8_t * data) { this->memory_addr = data; }
 
-	superblock_v2_raw * _data() {
-		return reinterpret_cast<superblock_v2_raw*>(memory_addr);
-	}
-
 	virtual int version() {
-		return _data()->superblock_version;
+		return *spec::superblock_version::get(memory_addr);
 	}
 
 	virtual int offset_size() {
-		return _data()->size_of_offsets;
+		return *spec::size_of_offsets::get(memory_addr);
 	}
 
 	virtual int length_size() {
-		return _data()->size_of_length;
+		return *spec::size_of_length::get(memory_addr);
 	}
 
 	virtual int group_leaf_node_K() {
@@ -615,15 +416,19 @@ struct superblock_v2 : public superblock {
 		return -1;
 	}
 
+	virtual int object_version() {
+		return -1;
+	}
+
 	virtual uint64_t base_address() {
-		return _data()->base_address;
+		return *spec::base_address::get(memory_addr);
 	}
 
 	virtual uint64_t file_free_space_info_address() {
-		return _data()->base_address;
+		return *spec::base_address::get(memory_addr);
 	}
 	virtual uint64_t end_of_file_address() {
-		return _data()->end_of_file_address;
+		return *spec::end_of_file_address::get(memory_addr);
 	}
 
 	virtual uint64_t driver_information_address() {
@@ -631,30 +436,28 @@ struct superblock_v2 : public superblock {
 	}
 
 	virtual uint64_t root_node_object_address() {
-		return _data()->root_group_object_header_address;
+		return *spec::root_group_object_header_address::get(memory_addr);
 	}
 };
 
 struct superblock_v3 : public superblock {
+	using spec = typename spec_defs::superblock_v3_spec;
+
 	superblock_v3(uint8_t * data) {
 		memory_addr = data;
-		size = sizeof(superblock_v3_raw);
-	}
-
-	superblock_v3_raw * _data() {
-		return reinterpret_cast<superblock_v3_raw*>(memory_addr);
+		size = spec_defs::superblock_v3_spec::size;
 	}
 
 	virtual int version() {
-		return _data()->superblock_version;
+		return *spec::superblock_version::get(memory_addr);
 	}
 
 	virtual int offset_size() {
-		return _data()->size_of_offsets;
+		return *spec::size_of_offsets::get(memory_addr);
 	}
 
 	virtual int length_size() {
-		return _data()->size_of_length;
+		return *spec::size_of_length::get(memory_addr);
 	}
 
 	virtual int group_leaf_node_K() {
@@ -669,15 +472,19 @@ struct superblock_v3 : public superblock {
 		return -1;
 	}
 
+	virtual int object_version() {
+		return -1;
+	}
+
 	virtual uint64_t base_address() {
-		return _data()->base_address;
+		return *spec::base_address::get(memory_addr);
 	}
 
 	virtual uint64_t file_free_space_info_address() {
-		return _data()->base_address;
+		return *spec::base_address::get(memory_addr);
 	}
 	virtual uint64_t end_of_file_address() {
-		return _data()->end_of_file_address;
+		return *spec::end_of_file_address::get(memory_addr);
 	}
 
 	virtual uint64_t driver_information_address() {
@@ -685,11 +492,12 @@ struct superblock_v3 : public superblock {
 	}
 
 	virtual uint64_t root_node_object_address() {
-		return _data()->root_group_object_header_address;
+		return *spec::root_group_object_header_address::get(memory_addr);
 	}
 };
 
 struct group_btree_v1 : public file_object {
+	using spec = typename spec_defs::b_tree_v1_hdr_spec;
 
 	group_btree_v1(uint8_t * addr) {
 		this->memory_addr = addr;
@@ -699,33 +507,58 @@ struct group_btree_v1 : public file_object {
 
 	group_btree_v1 & operator=(group_btree_v1 const & x) = default;
 
-	b_tree_v1_part0 * _data() {
-		return reinterpret_cast<b_tree_v1_part0*>(memory_addr);
-	}
-
 	/* K+1 keys */
 	length_type get_key(int i) {
-		return *reinterpret_cast<length_type*>(&memory_addr[sizeof(b_tree_v1_part0)+i*(SIZE_OF_OFFSET+SIZE_OF_LENGTH)]);
+		return *reinterpret_cast<length_type*>(&memory_addr[spec::size+i*(SIZE_OF_OFFSET+SIZE_OF_LENGTH)]);
 	}
 
 	/* K key */
 	offset_type get_node(int i) {
-		return *reinterpret_cast<offset_type*>(&memory_addr[sizeof(b_tree_v1_part0)+i*(SIZE_OF_OFFSET+SIZE_OF_LENGTH)+SIZE_OF_LENGTH]);
+		return *reinterpret_cast<offset_type*>(&memory_addr[spec::size+i*(SIZE_OF_OFFSET+SIZE_OF_LENGTH)+SIZE_OF_LENGTH]);
 	}
 
 	uint64_t get_depth() {
-		return _data()->node_level;
+		return *spec::node_level::get(memory_addr);
 	}
 
 };
 
 template<typename record_type>
 struct group_btree_v2_node;
+template<typename record_type>
+struct group_btree_v2;
+
+template<typename record_type>
+struct group_btree_v2_node {
+	using spec = typename spec_defs::b_tree_v2_node_spec;
+
+	group_btree_v2<record_type> * root;
+	uint8_t * memory_addr;
+	uint64_t record_count;
+	uint64_t depth;
+
+	uint64_t size_of_number_of_child_node;
+	uint64_t size_of_total_number_of_child_node;
+
+	data_reader_func read_number_of_child_node;
+	data_reader_func read_total_number_of_child_node;
+
+	group_btree_v2_node(group_btree_v2<record_type> * root, uint8_t * memory_addr, uint64_t record_count, uint64_t depth);
+
+	auto get_record(int i) -> uint8_t *;
+	auto get_node(int i) -> offset_type;
+	auto get_number_of_child_node(int i) -> uint64_t;
+	auto get_total_number_of_child_node(int i) -> uint64_t;
+
+};
 
 
+template<typename record_spec>
 struct group_btree_v2 : public file_object {
+	using spec = typename spec_defs::b_tree_v2_hdr_spec;
+	using node_type = group_btree_v2_node<record_spec>;
 
-	map<uint64_t, shared_ptr<group_btree_v2_node>> _node_tree_cache;
+	map<uint64_t, shared_ptr<node_type>> _node_tree_cache;
 
 	group_btree_v2(uint8_t * addr) {
 		this->memory_addr = addr;
@@ -735,30 +568,17 @@ struct group_btree_v2 : public file_object {
 
 	group_btree_v2 & operator=(group_btree_v2 const & x) = default;
 
-	b_tree_v2_header * _data() {
-		return reinterpret_cast<b_tree_v2_header*>(memory_addr);
-	}
-
-	/* K+1 keys */
-	length_type get_key(int i) {
-		return *reinterpret_cast<length_type*>(&memory_addr[sizeof(b_tree_v1_part0)+i*(SIZE_OF_OFFSET+SIZE_OF_LENGTH)]);
-	}
-
-	/* K key */
-	offset_type get_node(int i) {
-		return *reinterpret_cast<offset_type*>(&memory_addr[sizeof(b_tree_v1_part0)+i*(SIZE_OF_OFFSET+SIZE_OF_LENGTH)+SIZE_OF_LENGTH]);
-	}
 
 	uint64_t get_depth() {
-		return _data()->depth;
+		return *spec::depth::get(memory_addr);
 	}
 
 	uint64_t record_size() {
-		return _data()->record_size;
+		return *spec::record_size::get(memory_addr);
 	}
 
 	uint64_t node_size() {
-		return _data()->node_size;
+		return *spec::node_size::get(memory_addr);
 	}
 
 	void maximum_stored_records(uint64_t depth, uint64_t & maximum_child_node, uint64_t & total_maximum_child_node) {
@@ -784,189 +604,16 @@ struct group_btree_v2 : public file_object {
 
 	// the return value must be temporary, a call of (undef function) can
 	// invalidate this pointer.
-	group_btree_v2_node * get_btree_node(uint64_t offset, uint64_t record_count, uint64_t depth) {
+	shared_ptr<node_type> get_btree_node(uint64_t offset, uint64_t record_count, uint64_t depth) {
 		auto x = _node_tree_cache.find(offset);
 		if(x != _node_tree_cache.end())
-			return x->second.get();
-		return (_node_tree_cache[offset] = make_shared<group_btree_v2_node>(this, &base_addr()+offset, record_count, depth)).get();
+			return x->second;
+		return (_node_tree_cache[offset] = make_shared<node_type>(this, &base_addr()+offset, record_count, depth)).get();
 	}
 
 };
 
-// Layout: Version 2 B-tree, Type 1 Record Layout - Indirectly Accessed, Non-filtered, ‘Huge’ Fractal Heap Objects
-struct btree_v2_record_type1 {
-	offset_type address;
-	length_type length;
-	length_type id;
-} __attribute__((packed));
 
-// Layout: Version 2 B-tree, Type 2 Record Layout - Indirectly Accessed, Filtered, ‘Huge’ Fractal Heap Objects
-struct btree_v2_record_type2 {
-	offset_type address;
-	length_type length;
-	uint32_t filter_mask;
-	length_type memory_size;
-	length_type id;
-} __attribute__((packed));
-
-// Layout: Version 2 B-tree, Type 3 Record Layout - Directly Accessed, Non-filtered, ‘Huge’ Fractal Heap Objects
-struct btree_v2_record_type3 {
-	offset_type address;
-	length_type length;
-} __attribute__((packed));
-
-// Layout: Version 2 B-tree, Type 4 Record Layout - Directly Accessed, Filtered, ‘Huge’ Fractal Heap Objects
-struct btree_v2_record_type4 {
-	offset_type address;
-	length_type length;
-	uint32_t filter_mask;
-	length_type memory_size;
-} __attribute__((packed));
-
-// Layout: Version 2 B-tree, Type 5 Record Layout - Link Name for Indexed Group
-struct btree_v2_record_type5 {
-	uint32_t hash;
-	uint8_t id[7];
-} __attribute__((packed));
-
-// Layout: Version 2 B-tree, Type 6 Record Layout - Creation Order for Indexed Group
-struct btree_v2_record_type6 {
-	uint64_t creation_order;
-	uint8_t id[7];
-} __attribute__((packed));
-
-// Layout: Version 2 B-tree, Type 7 Record Layout - Shared Object Header Messages (Sub-type 0 - Message in Heap)
-struct btree_v2_record_type7_sub_type0 {
-	uint8_t message_location;
-	uint32_t hash;
-	uint32_t reference_count;
-	uint64_t heap_id;
-} __attribute__((packed));
-
-// Layout: Version 2 B-tree, Type 7 Record Layout - Shared Object Header Messages (Sub-type 1 - Message in Object Header)
-struct btree_v2_record_type7_sub_type1 {
-	uint8_t message_location;
-	uint32_t hash;
-	uint8_t reserved0;
-	uint8_t message_type;
-	uint16_t object_header_index;
-	uint64_t object_header_addr;
-} __attribute__((packed));
-
-
-// Layout: Version 2 B-tree, Type 8 Record Layout - Attribute Name for Indexed Attributes
-struct btree_v2_record_type8 {
-	uint64_t heap_id;
-	uint8_t message_flags;
-	uint32_t creation_order;
-	uint32_t hash_name;
-} __attribute__((packed));
-
-
-// Layout: Version 2 B-tree, Type 9 Record Layout - Creation Order for Indexed Attributes
-struct btree_v2_record_type9 {
-	uint64_t heap_id;
-	uint8_t message_flags;
-	uint32_t creation_order;
-} __attribute__((packed));
-
-// Layout: Version 2 B-tree, Type 10 Record Layout - Non-filtered Dataset Chunks
-struct btree_v2_record_type10 {
-	uint64_t addr;
-	// variable data;
-} __attribute__((packed));
-
-// Layout: Version 2 B-tree, Type 11 Record Layout - Filtered Dataset Chunks
-struct btree_v2_record_type11 {
-	uint64_t addr;
-	// variable data;
-} __attribute__((packed));
-
-template<typename record_type>
-struct group_btree_v2_node {
-	group_btree_v2 * root;
-	uint8_t * memory_addr;
-	uint64_t record_count;
-	uint64_t depth;
-
-	uint64_t size_of_number_of_child_node;
-	uint64_t size_of_total_number_of_child_node;
-
-	uint64_t (*read_number_of_child_node)(uint8_t * addr);
-	uint64_t (*read_total_number_of_child_node)(uint8_t * addr);
-
-
-	b_tree_v2_node * _data() {
-		return reinterpret_cast<b_tree_v2_node*>(memory_addr);
-	}
-
-	group_btree_v2_node(group_btree_v2 * root, uint8_t * memory_addr, uint64_t record_count, uint64_t depth) :
-		root{root},
-		memory_addr{memory_addr},
-		record_count{record_count},
-		depth{depth}
-	{
-		uint64_t number_of_child_node;
-		uint64_t total_number_of_child_node;
-		root->maximum_stored_records(depth, number_of_child_node, total_number_of_child_node);
-		size_of_number_of_child_node = get_minimum_storage_size_for(number_of_child_node);
-		size_of_total_number_of_child_node = get_minimum_storage_size_for(total_number_of_child_node);
-
-		switch(size_of_number_of_child_node) {
-		case 1:
-			read_number_of_child_node = [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint8_t*>(addr); };
-			break;
-		case 2:
-			read_number_of_child_node = [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint16_t*>(addr); };
-			break;
-		case 4:
-			read_number_of_child_node = [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint32_t*>(addr); };
-			break;
-		case 8:
-			read_number_of_child_node = [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint64_t*>(addr); };
-			break;
-		default:
-			read_number_of_child_node = nullptr;
-		}
-
-		switch(size_of_total_number_of_child_node) {
-		case 1:
-			read_total_number_of_child_node = [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint8_t*>(addr); };
-			break;
-		case 2:
-			read_total_number_of_child_node = [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint16_t*>(addr); };
-			break;
-		case 4:
-			read_total_number_of_child_node = [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint32_t*>(addr); };
-			break;
-		case 8:
-			read_total_number_of_child_node = [](uint8_t * addr) -> uint64_t { return *reinterpret_cast<uint64_t*>(addr); };
-			break;
-		default:
-			read_total_number_of_child_node = nullptr;
-		}
-
-	}
-
-	/* K+1 keys */
-	uint8_t * get_record(int i) {
-		return memory_addr[sizeof(b_tree_v2_node)+i*(root->record_size())];
-	}
-
-	/* K key */
-	offset_type get_node(int i) {
-		return *reinterpret_cast<offset_type*>(&memory_addr[sizeof(b_tree_v2_node)+i*(root->record_size()+size_of_number_of_child_node+size_of_total_number_of_child_node)]);
-	}
-
-	uint64_t get_number_of_child_node(int i) {
-		return *reinterpret_cast<offset_type*>(&memory_addr[sizeof(b_tree_v2_node)+i*(root->record_size()+size_of_number_of_child_node+size_of_total_number_of_child_node)+root->record_size()]);
-	}
-
-	uint64_t get_total_number_of_child_node(int i) {
-		return *reinterpret_cast<offset_type*>(&memory_addr[sizeof(b_tree_v2_node)+i*(root->record_size()+size_of_number_of_child_node+size_of_total_number_of_child_node)+root->record_size()+size_of_number_of_child_node]);
-	}
-
-};
 
 struct local_heap : public file_object {
 	uint8_t * get_data(uint64_t offset) {
@@ -1074,7 +721,7 @@ struct file_impl : public h5ng::file_impl {
 		if (version == 1) {
 			// TODO v1
 		} else if (version == 'O') {
-			uint32_t sign = reinterpret_cast<uint32_t*>(&data[offset]);
+			uint32_t sign = *reinterpret_cast<uint32_t*>(&data[offset]);
 			if (sign != 0x5244484ful)
 				throw runtime_error("TODO " STR(__LINE__));
 			version = data[offset+OFFSET_V2_OBJECT_HEADER_VERSION];
@@ -1098,11 +745,53 @@ struct file_impl : public h5ng::file_impl {
 		throw runtime_error("TODO " STR(__LINE__));
 	}
 
-};
-
-
+}; // struct _impl
 
 };
+
+
+template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH> template <typename record_type>
+_impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::group_btree_v2_node<record_type>::group_btree_v2_node(group_btree_v2<record_type> * root, uint8_t * memory_addr, uint64_t record_count, uint64_t depth) :
+	root{root},
+	memory_addr{memory_addr},
+	record_count{record_count},
+	depth{depth}
+{
+	uint64_t number_of_child_node;
+	uint64_t total_number_of_child_node;
+	root->maximum_stored_records(depth, number_of_child_node, total_number_of_child_node);
+	size_of_number_of_child_node = get_minimum_storage_size_for(number_of_child_node);
+	size_of_total_number_of_child_node = get_minimum_storage_size_for(total_number_of_child_node);
+
+	read_number_of_child_node = get_reader_for(size_of_number_of_child_node);
+	read_total_number_of_child_node = get_reader_for(size_of_total_number_of_child_node);
+
+}
+
+template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH> template <typename record_type>
+auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::group_btree_v2_node<record_type>::get_record(int i) -> uint8_t *
+{
+	return memory_addr[spec::size+i*(root->record_size())];
+}
+
+/* K key */
+template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH> template <typename record_type>
+auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::group_btree_v2_node<record_type>::get_node(int i) -> offset_type
+{
+	return *reinterpret_cast<offset_type*>(&memory_addr[spec::size+i*(root->record_size()+size_of_number_of_child_node+size_of_total_number_of_child_node)]);
+}
+
+template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH> template <typename record_type>
+auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::group_btree_v2_node<record_type>::get_number_of_child_node(int i) -> uint64_t
+{
+	return *reinterpret_cast<offset_type*>(&memory_addr[spec::size+i*(root->record_size()+size_of_number_of_child_node+size_of_total_number_of_child_node)+root->record_size()]);
+}
+
+template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH> template <typename record_type>
+auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::group_btree_v2_node<record_type>::get_total_number_of_child_node(int i) -> uint64_t
+{
+	return *reinterpret_cast<offset_type*>(&memory_addr[spec::size+i*(root->record_size()+size_of_number_of_child_node+size_of_total_number_of_child_node)+root->record_size()+size_of_number_of_child_node]);
+}
 
 struct superblock;
 
@@ -1153,57 +842,57 @@ struct h5obj;
 
 struct _h5obj {
 
-	_h5obj();
-	_h5obj(H5O_type_t const & type, hid_t id);
-
-	virtual ~_h5obj() { }
-
-	_h5obj(_h5obj const &) = delete;
-	_h5obj & operator=(_h5obj const &) = delete;
-
-	template<typename T, typename ... ARGS>
-	T * read(ARGS ... args) const;
-
-	template<typename T>
-	T read_attribute(string const & name) const;
-
-	h5obj operator[](string name) const;
-
-	template<typename T> struct _attr;
-
-	virtual vector<size_t> const & shape() const {
-		throw runtime_error("No shape() implemented");
-	}
-
-	virtual size_t const & shape(int i) const {
-		throw runtime_error("No shape() implemented");
-	}
+//	_h5obj();
+//	_h5obj(H5O_type_t const & type, hid_t id);
+//
+//	virtual ~_h5obj() { }
+//
+//	_h5obj(_h5obj const &) = delete;
+//	_h5obj & operator=(_h5obj const &) = delete;
+//
+//	template<typename T, typename ... ARGS>
+//	T * read(ARGS ... args) const;
+//
+//	template<typename T>
+//	T read_attribute(string const & name) const;
+//
+//	h5obj operator[](string name) const;
+//
+//	template<typename T> struct _attr;
+//
+//	virtual vector<size_t> const & shape() const {
+//		throw runtime_error("No shape() implemented");
+//	}
+//
+//	virtual size_t const & shape(int i) const {
+//		throw runtime_error("No shape() implemented");
+//	}
 
 };
 
 struct _h5dset : public _h5obj {
-	_h5dset(_h5dset const &) = delete;
-	_h5dset & operator=(_h5dset const &) = delete;
-
-	_h5dset(hid_t id, hid_t parent, string const & dsetname);
-
-	virtual ~_h5dset();
-
-	virtual vector<size_t> const & shape() const;
-	virtual size_t const & shape(int i) const;
-
-	template<typename T, typename ... ARGS>
-	T * read(ARGS ... args) const;
-
-	template<typename T>
-	vector<T> read_attribute(string const & name) const;
+//	_h5dset(_h5dset const &) = delete;
+//	_h5dset & operator=(_h5dset const &) = delete;
+//
+//	_h5dset(hid_t id, hid_t parent, string const & dsetname);
+//
+//	virtual ~_h5dset();
+//
+//	virtual vector<size_t> const & shape() const;
+//	virtual size_t const & shape(int i) const;
+//
+//	template<typename T, typename ... ARGS>
+//	T * read(ARGS ... args) const;
+//
+//	template<typename T>
+//	vector<T> read_attribute(string const & name) const;
 };
 
 struct _h5group : public _h5obj {
-	_h5group(_h5group const &) = default;
-	_h5group & operator=(_h5group const &) = default;
-	_h5group(hid_t id, hid_t parent, string const & name);
-	virtual ~_h5group();
+//	_h5group(_h5group const &) = default;
+//	_h5group & operator=(_h5group const &) = default;
+//	_h5group(hid_t id, hid_t parent, string const & name);
+//	virtual ~_h5group();
 };
 
 struct _h5file : public _h5obj {
