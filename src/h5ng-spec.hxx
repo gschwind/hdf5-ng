@@ -99,7 +99,17 @@ struct spec_defs {
 using offset_type = typename get_type_for_size<SIZE_OF_OFFSET>::type;
 using length_type = typename get_type_for_size<SIZE_OF_LENGTH>::type;
 
-struct symbol_table_entry_spec : public type_spec {
+struct group_symbol_table_spec : public type_spec {
+	using signature                    = spec<uint8_t[4], none>;
+	using version                      = spec<uint8_t, signature>;
+	using reserved_0                   = spec<uint8_t, version>;
+	using number_of_symbols            = spec<uint16_t, reserved_0>;
+
+	enum : uint64_t { size = last<number_of_symbols>::size };
+
+};
+
+struct group_symbol_table_entry_spec : public type_spec {
 
 	using link_name_offset            = spec<offset_type, none>;
 	using object_header_address       = spec<offset_type, link_name_offset>;
@@ -138,7 +148,7 @@ struct superblock_v0_spec : public type_spec {
 	using free_space_info_address                  = spec<offset_type, base_address>;
 	using end_of_file_address                      = spec<offset_type, free_space_info_address>;
 	using driver_information_address               = spec<offset_type, end_of_file_address>;
-	using root_group_symbol_table_entry            = spec<symbol_table_entry_spec, driver_information_address>;
+	using root_group_symbol_table_entry            = spec<group_symbol_table_entry_spec, driver_information_address>;
 
 	enum : uint64_t { size = last<root_group_symbol_table_entry>::size };
 
@@ -163,7 +173,7 @@ struct superblock_v1_spec : public type_spec {
 	using free_space_info_address                  = spec<offset_type, base_address>;
 	using end_of_file_address                      = spec<offset_type, free_space_info_address>;
 	using driver_information_address               = spec<offset_type, end_of_file_address>;
-	using root_group_symbol_table_entry            = spec<symbol_table_entry_spec, driver_information_address>;
+	using root_group_symbol_table_entry            = spec<group_symbol_table_entry_spec, driver_information_address>;
 
 	enum : uint64_t { size = last<root_group_symbol_table_entry>::size };
 

@@ -25,11 +25,13 @@
 #include <typeinfo>
 #include <vector>
 #include <list>
+#include <stack>
 #include <type_traits>
 
 #include "h5ng-spec.hxx"
 
-#define STR(x) #x
+#define _STR(x) #x
+#define STR(x) _STR(x)
 
 namespace h5ng {
 
@@ -203,17 +205,19 @@ struct object : public file_object {
 
 	virtual ~object() = default;
 
+	virtual auto list() -> vector<char const *> {
+		throw runtime_error{"TODO" STR(__LINE__)};
+	}
+
 };
 
 struct local_heap : public file_object {
 
+	local_heap(file_impl * file, uint8_t * addr) : file_object{file, addr} { }
+
 	virtual ~local_heap() = default;
 
-	virtual int version() = 0;
-
-	virtual char const * get_data(uint64_t offset) {
-		return nullptr;
-	}
+	virtual uint8_t * get_data(uint64_t offset) = 0;
 
 };
 
@@ -318,7 +322,7 @@ struct superblock_v0 : public superblock {
 	}
 
 	virtual uint64_t root_node_object_address() {
-		return spec_defs::symbol_table_entry_spec::object_header_address::get(&spec::root_group_symbol_table_entry::get(memory_addr));
+		return group_symbol_table_entry(&spec::root_group_symbol_table_entry::get(memory_addr)).offset_header_address();
 	}
 
 	virtual shared_ptr<object> get_root_object() {
@@ -376,7 +380,7 @@ struct superblock_v1 : public superblock {
 	}
 
 	virtual uint64_t root_node_object_address() {
-		return spec_defs::symbol_table_entry_spec::object_header_address::get(&spec::root_group_symbol_table_entry::get(memory_addr));
+		return group_symbol_table_entry(&spec::root_group_symbol_table_entry::get(memory_addr)).offset_header_address();
 	}
 
 	virtual shared_ptr<object> get_root_object() {
@@ -504,9 +508,7 @@ struct superblock_v3 : public superblock {
 struct group_btree_v1 : public file_object {
 	using spec = typename spec_defs::b_tree_v1_hdr_spec;
 
-	group_btree_v1(uint8_t * addr) {
-		this->memory_addr = addr;
-	}
+	group_btree_v1(file_impl * file, uint8_t * addr) : file_object{file, addr} { }
 
 	group_btree_v1(group_btree_v1 const &) = default;
 
@@ -523,8 +525,61 @@ struct group_btree_v1 : public file_object {
 	}
 
 	uint64_t get_depth() {
-		return *spec::node_level::get(memory_addr);
+		return spec::node_level::get(memory_addr);
 	}
+
+	uint64_t get_entries_count() {
+		return spec::entries_used::get(memory_addr);
+	}
+
+};
+
+struct group_symbol_table_entry {
+	using spec = typename spec_defs::group_symbol_table_entry_spec;
+
+	uint8_t * addr;
+
+	group_symbol_table_entry(uint8_t * addr) : addr{addr} { }
+
+	offset_type & link_name_offset() {
+		return spec::link_name_offset::get(addr);
+	}
+
+	offset_type & offset_header_address() {
+		return spec::object_header_address::get(addr);
+	}
+
+	uint32_t & cache_type() {
+		return spec::cache_type::get(addr);
+	}
+
+	uint8_t * scratch_pad() {
+		return &spec::scratch_pad_space::get(addr);
+	}
+
+
+};
+
+struct group_symbol_table {
+	using spec = typename spec_defs::group_symbol_table_spec;
+
+	uint8_t * addr;
+
+	group_symbol_table(uint8_t * addr) : addr{addr} { }
+
+	uint8_t & version() {
+		return spec::version::get(addr);
+	}
+
+	uint16_t & number_of_symbols() {
+		return spec::number_of_symbols::get(addr);
+	}
+
+	group_symbol_table_entry get_symbol_table_entry(int i) {
+		return group_symbol_table_entry{addr + spec::size + i * spec_defs::group_symbol_table_entry_spec::size};
+	}
+
+
 
 };
 
@@ -657,6 +712,16 @@ struct object_v1 : public object {
 
 	virtual ~object_v1() { }
 
+	void parse_symbole_table(uint8_t * msg) {
+		cout << "parse_symbol_table " << std::dec
+				<< spec_defs::message_symbole_table_spec::local_heap_address::get(msg) << " "
+				<< spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg)
+				<< endl;
+		lheap = file->make_local_heap(spec_defs::message_symbole_table_spec::local_heap_address::get(msg));
+		btree_root = spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg);
+	}
+
+
 	uint8_t * parse_message(uint8_t * current_message) {
 		uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
 		uint16_t message_size   = spec_defs::message_header_v1_spec::size_of_message::get(current_message);
@@ -697,6 +762,9 @@ struct object_v1 : public object {
 			break;
 		case 15:
 			break;
+		case 0x0011:
+			parse_symbole_table(current_message+spec_defs::message_header_v1_spec::size);
+			break;
 		}
 
 		// next message
@@ -727,6 +795,45 @@ struct object_v1 : public object {
 			}
 		}
 		return 0xfffffffffffffffful;
+	}
+
+	virtual auto list() -> vector<char const *> override {
+		vector<char const *> ret;
+		stack<group_btree_v1> stack;
+		uint64_t nK = file->get_superblock()->group_internal_node_K();
+		uint64_t lK = file->get_superblock()->group_leaf_node_K();
+
+		cout << "nK = " << nK << " lK = " << lK << endl;
+
+		vector<offset_type> group_symbole_tables;
+		cout << "btree-root = " << std::hex << btree_root << std::dec << endl;
+		stack.push(group_btree_v1{file, file->to_address(btree_root)});
+		while(not stack.empty()) {
+			group_btree_v1 cur = stack.top();
+			cout << std::dec << "process node depth=" << cur.get_depth() << " entries_count=" << cur.get_entries_count() << endl;
+			stack.pop();
+			if (cur.get_depth() == 0) {
+				//assert(cur.get_entries_count() <= lK);
+				for(int i = 0; i < cur.get_entries_count(); ++i) {
+					group_symbole_tables.push_back(cur.get_node(i));
+				}
+			} else {
+				//assert(cur.get_entries_count() <= nK);
+				for(int i = 0; i < cur.get_entries_count(); ++i) {
+					stack.push(group_btree_v1{file, file->to_address(cur.get_node(i))});
+				}
+			}
+		}
+
+		for(auto offset: group_symbole_tables) {
+			group_symbol_table table{file->to_address(offset)};
+			for(int i = 0; i < table.number_of_symbols(); ++i) {
+				ret.push_back(reinterpret_cast<char*>(lheap->get_data(table.get_symbol_table_entry(i).link_name_offset())));
+			}
+		}
+
+		return ret;
+
 	}
 
 
@@ -864,6 +971,16 @@ struct object_v2 : public object {
 
 };
 
+struct local_heap_v0 : public local_heap {
+	using spec = typename spec_defs::local_heap_spec;
+
+	local_heap_v0(file_impl * file, uint8_t * addr) : local_heap{file, addr} { }
+
+	virtual uint8_t * get_data(uint64_t offset) {
+		return file->to_address(spec::data_segment_address::get(memory_addr))+offset;
+	}
+
+};
 
 
 struct file_impl : public h5ng::file_impl {
@@ -938,7 +1055,10 @@ struct file_impl : public h5ng::file_impl {
 	}
 
 	virtual auto make_local_heap(uint64_t offset) -> shared_ptr<local_heap> {
-		throw runtime_error("TODO " STR(__LINE__));
+		auto x = local_heap_cache.find(offset);
+		if (x != local_heap_cache.end())
+			return x->second;
+		return (local_heap_cache[offset] = make_shared<local_heap_v0>(this, &data[offset]));
 	}
 
 	virtual auto make_global_heap(uint64_t offset) -> shared_ptr<global_heap> {
@@ -1169,6 +1289,10 @@ struct _h5file : public _h5obj {
 		yeach = _for_each0<2,4,8>::create(data, version, superblock_offset, size_of_offset, size_of_length);
 		auto sb = yeach->get_superblock();
 		auto root = sb->get_root_object();
+		auto v = root->list();
+		for(auto x: v) {
+			cout << "found key: " << x << endl;
+		}
 
 	}
 
