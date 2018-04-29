@@ -27,6 +27,7 @@
 #include <list>
 #include <stack>
 #include <type_traits>
+#include <limits>
 
 #include "h5ng-spec.hxx"
 
@@ -100,9 +101,6 @@ struct file_object {
 	file_object() = delete;
 	file_object(file_impl * file, uint8_t * addr) : file{file}, memory_addr{addr} { }
 	virtual ~file_object() { }
-
-	uint8_t * base_addr();
-
 };
 
 struct superblock;
@@ -205,8 +203,14 @@ struct object : public file_object {
 
 	virtual ~object() = default;
 
-	virtual auto list() -> vector<char const *> {
-		throw runtime_error{"TODO" STR(__LINE__)};
+	virtual auto list() -> vector<char const *>
+	{
+		throw runtime_error{"NOT IMPLEMENTED LINE:" STR(__LINE__)};
+	}
+
+	virtual auto find_object(char const * key) const -> shared_ptr<object>
+	{
+		throw runtime_error{"NOT IMPLEMENTED LINE:" STR(__LINE__)};
 	}
 
 };
@@ -217,7 +221,7 @@ struct local_heap : public file_object {
 
 	virtual ~local_heap() = default;
 
-	virtual uint8_t * get_data(uint64_t offset) = 0;
+	virtual uint8_t * get_data(uint64_t offset) const = 0;
 
 };
 
@@ -261,6 +265,9 @@ using spec_defs = typename h5ng::spec_defs<SIZE_OF_OFFSET, SIZE_OF_LENGTH>;
 
 using offset_type = typename get_type_for_size<SIZE_OF_OFFSET>::type;
 using length_type = typename get_type_for_size<SIZE_OF_LENGTH>::type;
+
+static offset_type constexpr undef_offset = std::numeric_limits<offset_type>::max();
+static offset_type constexpr undef_length = std::numeric_limits<length_type>::max();
 
 
 static uint64_t get_minimum_storage_size_for(uint64_t count) {
@@ -560,6 +567,54 @@ struct group_symbol_table_entry {
 
 };
 
+template<typename RETURN, size_t const SIZE>
+struct raw_entry_list {
+	uint8_t * addr;
+	uint64_t size;
+
+	raw_entry_list(uint8_t * addr, uint64_t size) : addr{addr}, size{size} { }
+
+	struct iterator {
+		uint8_t * addr;
+
+		iterator(uint8_t * addr) : addr{addr} { }
+
+		iterator & operator++() {
+			addr += SIZE;
+			return *this;
+		}
+
+		iterator operator++(int) {
+			iterator ret{addr};
+			addr += SIZE;
+			return ret;
+		}
+
+		RETURN operator*() {
+			return RETURN{addr};
+		}
+
+		bool operator==(iterator const & x) {
+			return addr == x.addr;
+		}
+
+		bool operator!=(iterator const & x) {
+			return addr != x.addr;
+		}
+
+	};
+
+	iterator begin() const {
+		return iterator{addr};
+	}
+
+	iterator end() const {
+		return iterator{addr + size*SIZE};
+	}
+
+};
+
+
 struct group_symbol_table {
 	using spec = typename spec_defs::group_symbol_table_spec;
 
@@ -579,7 +634,11 @@ struct group_symbol_table {
 		return group_symbol_table_entry{addr + spec::size + i * spec_defs::group_symbol_table_entry_spec::size};
 	}
 
+	using symbol_table_entry_list = raw_entry_list<group_symbol_table_entry, spec_defs::group_symbol_table_entry_spec::size>;
 
+	symbol_table_entry_list get_symbole_entry_list() {
+		return symbol_table_entry_list{addr+spec::size, number_of_symbols()};
+	}
 
 };
 
@@ -664,12 +723,12 @@ struct group_btree_v2 : public file_object {
 
 	// the return value must be temporary, a call of (undef function) can
 	// invalidate this pointer.
-	shared_ptr<node_type> get_btree_node(uint64_t offset, uint64_t record_count, uint64_t depth) {
-		auto x = _node_tree_cache.find(offset);
-		if(x != _node_tree_cache.end())
-			return x->second;
-		return (_node_tree_cache[offset] = make_shared<node_type>(this, &base_addr()+offset, record_count, depth)).get();
-	}
+//	shared_ptr<node_type> get_btree_node(uint64_t offset, uint64_t record_count, uint64_t depth) {
+//		auto x = _node_tree_cache.find(offset);
+//		if(x != _node_tree_cache.end())
+//			return x->second;
+//		return (_node_tree_cache[offset] = make_shared<node_type>(this, &base_addr()+offset, record_count, depth)).get();
+//	}
 
 };
 
@@ -774,27 +833,60 @@ struct object_v1 : public object {
 
 	}
 
-	shared_ptr<object> find_object(char const * key) {
-		auto offset = _find(group_btree_v1(base_addr()+btree_root));
+	auto find_object(char const * key) const -> shared_ptr<object> {
+		auto offset = _group_find(key);
 		return file->make_object(offset);
 	}
 
-	offset_type _find(group_btree_v1 cur, char const * key) {
-		for(int i = 1; i <= K; ++i) {
-			char const * xkey = lheap->get_data(cur.get_key(i));
-			int cmp = std::strcmp(xkey, key);
-			if (cmp <= 0) {
-				if (cur.get_depth() == 0) {
-					if (cmp == 0)
-						return cur.get_node(i-1);
-					else
-						throw runtime_error("TODO " STR(__LINE__));
-				} else {
-					return _find(group_btree_v1(), key);
+	char const * _get_link_name(uint64_t offset) const {
+		return reinterpret_cast<char *>(lheap->get_data(offset));
+	}
+
+	offset_type _group_find(char const * key) const {
+		auto group_symbol_table_offset = _group_find_key(key);
+		group_symbol_table table{file->to_address(group_symbol_table_offset)};
+		for(auto symbol_table_entry: table.get_symbole_entry_list()) {
+			char const * link_name = _get_link_name(symbol_table_entry.link_name_offset());
+			cout << "check link name = " << link_name << endl;
+			if (std::strcmp(key, link_name) == 0)
+				return symbol_table_entry.offset_header_address();
+		}
+
+		throw runtime_error("TODO " STR(__LINE__));
+
+	}
+
+	/** return group_symbole_table that content the key **/
+	offset_type _group_find_key(char const * key) const {
+		stack<group_btree_v1> stack;
+		uint64_t nK = file->get_superblock()->group_internal_node_K();
+		uint64_t lK = file->get_superblock()->group_leaf_node_K();
+
+		cout << "nK = " << nK << " lK = " << lK << endl;
+
+		stack.push(group_btree_v1{file, file->to_address(btree_root)});
+		while(not stack.empty()) {
+			group_btree_v1 cur = stack.top();
+			cout << std::dec << "process node depth=" << cur.get_depth() << " entries_count=" << cur.get_entries_count() << endl;
+			stack.pop();
+			if (cur.get_depth() == 0) {
+				//assert(cur.get_entries_count() <= lK);
+				for(int i = 0; i < cur.get_entries_count(); ++i) {
+					char const * link_name = _get_link_name(cur.get_key(i+1));
+					int cmp = std::strcmp(key, link_name);
+					if (cmp <= 0)
+						return cur.get_node(i);
+				}
+			} else {
+				//assert(cur.get_entries_count() <= nK);
+				for(int i = 0; i < cur.get_entries_count(); ++i) {
+					stack.push(group_btree_v1{file, file->to_address(cur.get_node(i))});
 				}
 			}
 		}
-		return 0xfffffffffffffffful;
+
+		throw runtime_error("TODO " STR(__LINE__));
+
 	}
 
 	virtual auto list() -> vector<char const *> override {
@@ -827,8 +919,8 @@ struct object_v1 : public object {
 
 		for(auto offset: group_symbole_tables) {
 			group_symbol_table table{file->to_address(offset)};
-			for(int i = 0; i < table.number_of_symbols(); ++i) {
-				ret.push_back(reinterpret_cast<char*>(lheap->get_data(table.get_symbol_table_entry(i).link_name_offset())));
+			for(auto symbol_table_entry: table.get_symbole_entry_list()) {
+				ret.push_back(_get_link_name(symbol_table_entry.link_name_offset()));
 			}
 		}
 
@@ -976,7 +1068,8 @@ struct local_heap_v0 : public local_heap {
 
 	local_heap_v0(file_impl * file, uint8_t * addr) : local_heap{file, addr} { }
 
-	virtual uint8_t * get_data(uint64_t offset) {
+	virtual auto get_data(uint64_t offset) const -> uint8_t *
+	{
 		return file->to_address(spec::data_segment_address::get(memory_addr))+offset;
 	}
 
@@ -1120,12 +1213,6 @@ auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::group_btree_v2_node<record_type>::ge
 {
 	return *reinterpret_cast<offset_type*>(&memory_addr[spec::size+i*(root->record_size()+size_of_number_of_child_node+size_of_total_number_of_child_node)+root->record_size()+size_of_number_of_child_node]);
 }
-
-auto file_object::base_addr() -> uint8_t *
-{
-	return nullptr;
-}
-
 
 struct superblock;
 
@@ -1293,6 +1380,8 @@ struct _h5file : public _h5obj {
 		for(auto x: v) {
 			cout << "found key: " << x << endl;
 		}
+
+		auto obj = root->find_object("ssaod550");
 
 	}
 
