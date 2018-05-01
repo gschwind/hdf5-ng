@@ -744,6 +744,8 @@ struct object_v1 : public object {
 
 	uint32_t * size_of_elements;
 
+	uint8_t * fillvalue;
+
 	uint8_t * first_message() {
 		uint64_t first_message_offset = file->to_offset(&memory_addr[spec::size]);
 
@@ -834,6 +836,14 @@ struct object_v1 : public object {
 
 	}
 
+	void parse_fillvalue_old(uint8_t * msg) {
+		cout << "parse_datatype " << std::dec <<
+				" size=" << static_cast<unsigned>(spec_defs::message_fillvalue_old_spec::size_of_fillvalue::get(msg))
+				<< endl;
+		// TODO
+		fillvalue = &spec_defs::message_fillvalue_old_spec::size_of_fillvalue::get(msg);
+	}
+
 	void parse_symbole_table(uint8_t * msg) {
 		cout << "parse_symbol_table " << std::dec
 				<< spec_defs::message_symbole_table_spec::local_heap_address::get(msg) << " "
@@ -842,7 +852,6 @@ struct object_v1 : public object {
 		lheap = file->make_local_heap(spec_defs::message_symbole_table_spec::local_heap_address::get(msg));
 		btree_root = spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg);
 	}
-
 
 	uint8_t * parse_message(uint8_t * current_message) {
 		uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
@@ -859,6 +868,9 @@ struct object_v1 : public object {
 			break;
 		case 0x0003:
 			parse_datatype(current_message+spec_defs::message_header_v1_spec::size);
+			break;
+		case 0x0004:
+			parse_fillvalue_old(current_message+spec_defs::message_header_v1_spec::size);
 			break;
 		case 0x0011:
 			parse_symbole_table(current_message+spec_defs::message_header_v1_spec::size);

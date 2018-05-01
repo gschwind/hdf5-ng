@@ -294,13 +294,21 @@ struct message_dataspace_spec : public type_spec {
 	enum : uint64_t { size_v2 = last<reserved_v2>::size };
 };
 
-// Layout: Dataspace Message - Version 1
+// Layout: Dataspace Message - Version 1&2
 struct message_datatype_spec : public type_spec {
 	using class_and_version   = spec<uint8_t,     none>;
 	using class_bit_fields    = spec<uint8_t[3],  class_and_version>;
 	using size_of_elements    = spec<uint32_t,    class_bit_fields>;
 	// optional fields
 	enum : uint64_t { size = last<size_of_elements>::size };
+};
+
+// Layout: Fill Value Message (Old)
+// This is never writen by hdf5 library above 1.6
+struct message_fillvalue_old_spec : public type_spec {
+	using size_of_fillvalue   = spec<uint32_t,     none>; // should match datatype size_of_elements
+	// optional fields
+	enum : uint64_t { size = last<size_of_fillvalue>::size };
 };
 
 // Layout: Symbol Table Message #0x0011
