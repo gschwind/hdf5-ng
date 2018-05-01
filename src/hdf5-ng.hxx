@@ -841,7 +841,20 @@ struct object_v1 : public object {
 				" size=" << static_cast<unsigned>(spec_defs::message_fillvalue_old_spec::size_of_fillvalue::get(msg))
 				<< endl;
 		// TODO
-		fillvalue = &spec_defs::message_fillvalue_old_spec::size_of_fillvalue::get(msg);
+		fillvalue = msg + spec_defs::message_fillvalue_old_spec::size;
+	}
+
+	void parse_fillvalue(uint8_t * msg) {
+		cout << "parse_datatype " << std::dec <<
+				" size=" << static_cast<unsigned>(spec_defs::message_fillvalue_spec::version::get(msg)) <<
+				" space_allocation_time=0x" << std::hex << static_cast<int>(spec_defs::message_fillvalue_spec::space_allocation_time::get(msg)) << std::dec <<
+				" fillvalue_write_time=0x" << std::hex << static_cast<int>(spec_defs::message_fillvalue_spec::fillvalue_write_time::get(msg)) << std::dec <<
+				" fillvalue_defined=0x" << std::hex << static_cast<int>(spec_defs::message_fillvalue_spec::fillvalue_defined::get(msg)) << std::dec <<
+				endl;
+		// TODO
+		if (spec_defs::message_fillvalue_spec::version::get(msg) == 1 or spec_defs::message_fillvalue_spec::fillvalue_defined::get(msg) != 0) {
+			fillvalue = msg + spec_defs::message_fillvalue_spec::size + sizeof(uint32_t);
+		}
 	}
 
 	void parse_symbole_table(uint8_t * msg) {
@@ -871,6 +884,9 @@ struct object_v1 : public object {
 			break;
 		case 0x0004:
 			parse_fillvalue_old(current_message+spec_defs::message_header_v1_spec::size);
+			break;
+		case 0x0005:
+			parse_fillvalue(current_message+spec_defs::message_header_v1_spec::size);
 			break;
 		case 0x0011:
 			parse_symbole_table(current_message+spec_defs::message_header_v1_spec::size);

@@ -311,6 +311,16 @@ struct message_fillvalue_old_spec : public type_spec {
 	enum : uint64_t { size = last<size_of_fillvalue>::size };
 };
 
+// Layout: Fill Value Message - Versions 1 and 2
+struct message_fillvalue_spec : public type_spec {
+	using version                    = spec<uint8_t,     none>; // should match datatype size_of_elements
+	using space_allocation_time      = spec<uint8_t,     version>;
+	using fillvalue_write_time       = spec<uint8_t,     space_allocation_time>;
+	using fillvalue_defined          = spec<uint8_t,     fillvalue_write_time>;
+	// optional fields
+	enum : uint64_t { size = last<fillvalue_defined>::size };
+};
+
 // Layout: Symbol Table Message #0x0011
 struct message_symbole_table_spec : public type_spec {
 	using b_tree_v1_address        = spec<offset_type,  none>;
