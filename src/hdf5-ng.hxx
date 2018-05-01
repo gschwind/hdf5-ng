@@ -742,6 +742,8 @@ struct object_v1 : public object {
 	length_type * max_shape;
 	length_type * permutation; // Never implement in official lib.
 
+	uint32_t * size_of_elements;
+
 	uint8_t * first_message() {
 		uint64_t first_message_offset = file->to_offset(&memory_addr[spec::size]);
 
@@ -821,6 +823,16 @@ struct object_v1 : public object {
 
 	}
 
+	void parse_datatype(uint8_t * msg) {
+		cout << "parse_datatype " << std::dec <<
+				" version="<< static_cast<int>((spec_defs::message_datatype_spec::class_and_version::get(msg)&0xf0) >> 4) << " "
+				" size=" << static_cast<unsigned>(spec_defs::message_datatype_spec::size_of_elements::get(msg))
+				<< endl;
+
+		// TODO
+		size_of_elements = &spec_defs::message_datatype_spec::size_of_elements::get(msg);
+
+	}
 
 	void parse_symbole_table(uint8_t * msg) {
 		cout << "parse_symbol_table " << std::dec
@@ -844,6 +856,9 @@ struct object_v1 : public object {
 		switch(message_type) {
 		case 0x0001:
 			parse_dataspace(current_message+spec_defs::message_header_v1_spec::size);
+			break;
+		case 0x0003:
+			parse_datatype(current_message+spec_defs::message_header_v1_spec::size);
 			break;
 		case 0x0011:
 			parse_symbole_table(current_message+spec_defs::message_header_v1_spec::size);
