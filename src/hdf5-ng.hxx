@@ -329,7 +329,7 @@ struct superblock_v0 : public superblock {
 	}
 
 	virtual uint64_t root_node_object_address() {
-		return group_symbol_table_entry(&spec::root_group_symbol_table_entry::get(memory_addr)).offset_header_address();
+		return reinterpret_cast<group_symbol_table_entry*>(&spec::root_group_symbol_table_entry::get(memory_addr))->offset_header_address();
 	}
 
 	virtual shared_ptr<object> get_root_object() {
@@ -387,7 +387,7 @@ struct superblock_v1 : public superblock {
 	}
 
 	virtual uint64_t root_node_object_address() {
-		return group_symbol_table_entry(&spec::root_group_symbol_table_entry::get(memory_addr)).offset_header_address();
+		return reinterpret_cast<group_symbol_table_entry*>(&spec::root_group_symbol_table_entry::get(memory_addr))->offset_header_address();
 	}
 
 	virtual shared_ptr<object> get_root_object() {
@@ -544,24 +544,22 @@ struct group_btree_v1 : public file_object {
 struct group_symbol_table_entry {
 	using spec = typename spec_defs::group_symbol_table_entry_spec;
 
-	uint8_t * addr;
-
-	group_symbol_table_entry(uint8_t * addr) : addr{addr} { }
+	group_symbol_table_entry() = delete;
 
 	offset_type & link_name_offset() {
-		return spec::link_name_offset::get(addr);
+		return spec::link_name_offset::get(reinterpret_cast<uint8_t*>(this));
 	}
 
 	offset_type & offset_header_address() {
-		return spec::object_header_address::get(addr);
+		return spec::object_header_address::get(reinterpret_cast<uint8_t*>(this));
 	}
 
 	uint32_t & cache_type() {
-		return spec::cache_type::get(addr);
+		return spec::cache_type::get(reinterpret_cast<uint8_t*>(this));
 	}
 
 	uint8_t * scratch_pad() {
-		return &spec::scratch_pad_space::get(addr);
+		return &spec::scratch_pad_space::get(reinterpret_cast<uint8_t*>(this));
 	}
 
 
@@ -590,8 +588,8 @@ struct raw_entry_list {
 			return ret;
 		}
 
-		RETURN operator*() {
-			return RETURN{addr};
+		RETURN * operator*() {
+			return reinterpret_cast<RETURN*>(addr);
 		}
 
 		bool operator==(iterator const & x) {
@@ -739,6 +737,11 @@ struct object_v1 : public object {
 	shared_ptr<local_heap> lheap;
 	offset_type btree_root;
 
+	uint8_t * rank;
+	length_type * shape;
+	length_type * max_shape;
+	length_type * permutation; // Never implement in official lib.
+
 	uint8_t * first_message() {
 		uint64_t first_message_offset = file->to_offset(&memory_addr[spec::size]);
 
@@ -771,6 +774,54 @@ struct object_v1 : public object {
 
 	virtual ~object_v1() { }
 
+	void parse_dataspace(uint8_t * msg) {
+		cout << "parse_dataspace " << std::dec <<
+				" version="<< static_cast<int>(spec_defs::message_dataspace_spec::version::get(msg)) << " "
+				" rank=" << static_cast<int>(spec_defs::message_dataspace_spec::rank::get(msg)) << " "
+				" flags=0x" << std::hex << static_cast<int>(spec_defs::message_dataspace_spec::flags::get(msg)) << std::dec
+				<< endl;
+
+		rank = &spec_defs::message_dataspace_spec::rank::get(msg);
+
+
+		if (spec_defs::message_dataspace_spec::version::get(msg) == 1) {
+			// version 1
+
+			shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1);
+
+			if (spec_defs::message_dataspace_spec::flags::get(msg)&0x01) {
+				max_shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1 + *rank*SIZE_OF_LENGTH);
+			} else {
+				max_shape = nullptr;
+			}
+
+			if (spec_defs::message_dataspace_spec::flags::get(msg)&0x02) {
+				if (spec_defs::message_dataspace_spec::flags::get(msg)&0x01) {
+					permutation = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1 + (*rank*SIZE_OF_LENGTH)*2);
+				} else {
+					permutation = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1 + *rank*SIZE_OF_LENGTH);
+				}
+			} else {
+				permutation = nullptr;
+			}
+
+		} else if (spec_defs::message_dataspace_spec::version::get(msg) == 2) {
+			// version 2
+
+			shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v2);
+			if (spec_defs::message_dataspace_spec::flags::get(msg)&0x01) {
+				max_shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v2 + *rank*SIZE_OF_LENGTH);
+			} else {
+				max_shape = nullptr;
+			}
+
+			// in version 2 permutation is removed, because it was never implemented.
+			permutation = nullptr;
+		}
+
+	}
+
+
 	void parse_symbole_table(uint8_t * msg) {
 		cout << "parse_symbol_table " << std::dec
 				<< spec_defs::message_symbole_table_spec::local_heap_address::get(msg) << " "
@@ -791,35 +842,8 @@ struct object_v1 : public object {
 				<< " flags=" << std::hex << static_cast<int>(message_flags) << ">" << endl;
 
 		switch(message_type) {
-		case 1:
-			break;
-		case 2:
-			break;
-		case 3:
-			break;
-		case 4:
-			break;
-		case 5:
-			break;
-		case 6:
-			break;
-		case 7:
-			break;
-		case 8:
-			break;
-		case 9:
-			break;
-		case 10:
-			break;
-		case 11:
-			break;
-		case 12:
-			break;
-		case 13:
-			break;
-		case 14:
-			break;
-		case 15:
+		case 0x0001:
+			parse_dataspace(current_message+spec_defs::message_header_v1_spec::size);
 			break;
 		case 0x0011:
 			parse_symbole_table(current_message+spec_defs::message_header_v1_spec::size);
@@ -846,10 +870,10 @@ struct object_v1 : public object {
 		auto group_symbol_table_offset = _group_find_key(key);
 		group_symbol_table table{file->to_address(group_symbol_table_offset)};
 		for(auto symbol_table_entry: table.get_symbole_entry_list()) {
-			char const * link_name = _get_link_name(symbol_table_entry.link_name_offset());
+			char const * link_name = _get_link_name(symbol_table_entry->link_name_offset());
 			cout << "check link name = " << link_name << endl;
 			if (std::strcmp(key, link_name) == 0)
-				return symbol_table_entry.offset_header_address();
+				return symbol_table_entry->offset_header_address();
 		}
 
 		throw runtime_error("TODO " STR(__LINE__));
@@ -920,7 +944,7 @@ struct object_v1 : public object {
 		for(auto offset: group_symbole_tables) {
 			group_symbol_table table{file->to_address(offset)};
 			for(auto symbol_table_entry: table.get_symbole_entry_list()) {
-				ret.push_back(_get_link_name(symbol_table_entry.link_name_offset()));
+				ret.push_back(_get_link_name(symbol_table_entry->link_name_offset()));
 			}
 		}
 
@@ -1071,6 +1095,16 @@ struct local_heap_v0 : public local_heap {
 	virtual auto get_data(uint64_t offset) const -> uint8_t *
 	{
 		return file->to_address(spec::data_segment_address::get(memory_addr))+offset;
+	}
+
+	auto data_segment_size() -> length_type &
+	{
+		return spec::data_segment_size::get(memory_addr);
+	}
+
+	auto offset_of_head_of_free_list() -> length_type &
+	{
+		return spec::offset_to_head_free_list::get(memory_addr);
 	}
 
 };

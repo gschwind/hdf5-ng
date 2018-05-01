@@ -282,6 +282,17 @@ struct message_header_v2_spec : public type_spec {
 	enum : uint64_t { size = last<flags>::size };
 };
 
+// Layout: Dataspace Message - Version 1
+struct message_dataspace_spec : public type_spec {
+	using version             = spec<uint8_t,     none>;
+	using rank                = spec<uint8_t,     version>;
+	using flags               = spec<uint8_t,     rank>;
+	using reserved_v1         = spec<uint8_t[5],  flags>;
+	using reserved_v2         = spec<uint8_t,     flags>;
+	// optional fields
+	enum : uint64_t { size_v1 = last<reserved_v1>::size };
+	enum : uint64_t { size_v2 = last<reserved_v2>::size };
+};
 
 // Layout: Symbol Table Message #0x0011
 struct message_symbole_table_spec : public type_spec {
