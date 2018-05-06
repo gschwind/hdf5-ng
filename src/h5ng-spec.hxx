@@ -321,6 +321,38 @@ struct message_fillvalue_spec : public type_spec {
 	enum : uint64_t { size = last<fillvalue_defined>::size };
 };
 
+// Layout: Data Layout Message (Versions 1 and 2)
+struct message_data_layout_v1_spec : public type_spec {
+	using version                    = spec<uint8_t,     none>; // should match datatype size_of_elements
+	using dimensionnality            = spec<uint8_t,     version>;
+	using layout_class               = spec<uint8_t,     dimensionnality>;
+	using reserved_0                 = spec<uint8_t,     layout_class>;
+	using reserved_1                 = spec<uint32_t,    reserved_0>;
+	// optional fields
+	enum : uint64_t { size = last<reserved_1>::size };
+};
+
+using message_data_layout_v2_spec = message_data_layout_v1_spec;
+
+// Layout: Data Layout Message (Versions 3)
+struct message_data_layout_v3_spec : public type_spec {
+	using version                    = spec<uint8_t,     none>; // should match datatype size_of_elements
+	using layout_class               = spec<uint8_t,     version>;
+	// properties
+	enum : uint64_t { size = last<layout_class>::size };
+};
+
+using message_data_layout_v4_spec = message_data_layout_v3_spec;
+
+// Layout: Modification Time Message
+struct message_object_modification_time_spec : public type_spec {
+	using version                    = spec<uint8_t,     none>; // should match datatype size_of_elements
+	using reserved                   = spec<uint8_t[3],  version>;
+	using time                       = spec<uint32_t,    version>; // 2038 bug
+	// properties
+	enum : uint64_t { size = last<reserved>::size };
+};
+
 // Layout: Symbol Table Message #0x0011
 struct message_symbole_table_spec : public type_spec {
 	using b_tree_v1_address        = spec<offset_type,  none>;
