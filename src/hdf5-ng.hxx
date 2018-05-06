@@ -31,6 +31,7 @@
 #include <iomanip>
 
 #include "h5ng-spec.hxx"
+#include "h5ng.hxx"
 
 #define _STR(x) #x
 #define STR(x) _STR(x)
@@ -154,71 +155,34 @@ struct btree : public file_object {
 //  - superblock extension
 //  - dataset
 //  - group
-struct object : public file_object {
-//	enum object_type_e type; // store the guessed real type.
-//
-//	// dataset message
-//	vector<uint64_t> shape;
-//	vector<uint64_t> shape_max;
-//	vector<uint64_t> permutation; // never been implemented.
-//
-//	dataset_layout_e dset_layout;
-//	uint64_t data_offset;
-//
-//	// link info message
-//	uint64_t maximum_creation_index;
-//	uint64_t fractal_heap;
-//	uint64_t btree_v2_address;
-//	uint64_t create_order_btree_address;
-//
-//	// Datatype
-//	uint64_t type_size;
-//
-//	// fillvalue
-//	vector<uint8_t> fillvalue_data;
-//
-//	// Link Messages
-//	list<void*> link_list;
-
-	// DataStorage
-	// TODO
-
-	// Data layout
-	// TODO
-
-	// Group info message
-	// TODO
-
-	// Filter pipe line
-	// Only used for chunked dataset.
-
-	// Attrubute message
-//	map<string, vector<uint8_t>> attributes;
-
-	// Comments
-	// TODO
-
-	// object modification time
+struct object : public file_object, public _h5obj {
 
 	object(file_impl * file, uint8_t * addr) : file_object{file, addr} { }
 
 	virtual ~object() = default;
 
-	virtual auto list() -> vector<char const *>
-	{
-		throw runtime_error{"NOT IMPLEMENTED LINE:" STR(__LINE__)};
+	virtual auto operator[](string const & name) const -> h5obj override {
+		throw runtime_error("Not implement line:" STR(__LINE__));
 	}
 
-	virtual auto find_object(char const * key) const -> shared_ptr<object>
-	{
-		throw runtime_error{"NOT IMPLEMENTED LINE:" STR(__LINE__)};
+	virtual vector<size_t> shape() const override {
+		throw runtime_error("Not implement line:" STR(__LINE__));
 	}
 
-	virtual void print_info() {
-		throw runtime_error{"NOT IMPLEMENTED LINE:" STR(__LINE__)};
+	virtual size_t shape(int i) const override {
+		throw runtime_error("Not implement line:" STR(__LINE__));
+	}
+
+	virtual auto keys() const -> vector<char const *> override {
+		throw runtime_error("Not implement line:" STR(__LINE__));
+	}
+
+	virtual void print_info() override {
+		throw runtime_error("Not implement line:" STR(__LINE__));
 	}
 
 };
+
 
 struct local_heap : public file_object {
 
@@ -747,7 +711,7 @@ struct object_v1 : public object {
 
 
 	uint8_t * rank;
-	length_type * shape;
+	length_type * _shape;
 	length_type * max_shape;
 	length_type * permutation; // Never implement in official lib.
 
@@ -782,6 +746,8 @@ struct object_v1 : public object {
 	}
 
 	object_v1(file_impl * file, uint8_t * addr) : object{file, addr} {
+		btree_root = undef_offset;
+
 		cout << "creating object v1, object cache size = TODO" << endl;
 
 		uint64_t msg_count = spec::total_number_of_header_message::get(memory_addr);
@@ -812,7 +778,7 @@ struct object_v1 : public object {
 		if (spec_defs::message_dataspace_spec::version::get(msg) == 1) {
 			// version 1
 
-			shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1);
+			_shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1);
 
 			if (spec_defs::message_dataspace_spec::flags::get(msg)&0x01) {
 				max_shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1 + *rank*SIZE_OF_LENGTH);
@@ -833,7 +799,7 @@ struct object_v1 : public object {
 		} else if (spec_defs::message_dataspace_spec::version::get(msg) == 2) {
 			// version 2
 
-			shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v2);
+			_shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v2);
 			if (spec_defs::message_dataspace_spec::flags::get(msg)&0x01) {
 				max_shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v2 + *rank*SIZE_OF_LENGTH);
 			} else {
@@ -1069,9 +1035,24 @@ struct object_v1 : public object {
 
 	}
 
-	auto find_object(char const * key) const -> shared_ptr<object> {
-		auto offset = _group_find(key);
-		return file->make_object(offset);
+	virtual auto operator[](string const & name) const -> h5obj override {
+		auto offset = _group_find(name.c_str());
+		return h5obj{file->make_object(offset)};
+	}
+
+	virtual vector<size_t> shape() const override {
+		if (_shape) {
+			return vector<size_t>{&_shape[0], &_shape[*rank-1]};
+		}
+		throw runtime_error("shape is not defined");
+	}
+
+	virtual size_t shape(int i) const override {
+		if (not _shape)
+			throw runtime_error("shape is not defined");
+		if (i >= * rank)
+			throw runtime_error("request shape is out of bounds");
+		return _shape[i];
 	}
 
 	char const * _get_link_name(uint64_t offset) const {
@@ -1125,13 +1106,13 @@ struct object_v1 : public object {
 
 	}
 
-	virtual auto list() -> vector<char const *> override {
+	virtual auto keys() const -> vector<char const *> override {
+
+		if(btree_root == undef_offset)
+			return vector<char const *>{};
+
 		vector<char const *> ret;
 		stack<group_btree_v1> stack;
-		uint64_t nK = file->get_superblock()->group_internal_node_K();
-		uint64_t lK = file->get_superblock()->group_leaf_node_K();
-
-		cout << "nK = " << nK << " lK = " << lK << endl;
 
 		vector<offset_type> group_symbole_tables;
 		cout << "btree-root = " << std::hex << btree_root << std::dec << endl;
@@ -1169,12 +1150,12 @@ struct object_v1 : public object {
 			cout << std::dec;
 			cout << "rank = " << static_cast<unsigned>(*rank) << endl;
 
-			if (shape) {
+			if (_shape) {
 				cout << "shape= {";
 				for(unsigned i = 0; i < *rank-1; ++i) {
-					cout << shape[i] << ",";
+					cout << _shape[i] << ",";
 				}
-				cout << shape[*rank-1] << "}" << endl;
+				cout << _shape[*rank-1] << "}" << endl;
 			}
 
 			if (max_shape) {
@@ -1568,36 +1549,7 @@ struct _for_each0<> {
 };
 
 
-struct h5obj;
 
-struct _h5obj {
-
-	_h5obj() = default;
-
-	virtual ~_h5obj() { }
-
-	_h5obj(_h5obj const &) = delete;
-	_h5obj & operator=(_h5obj const &) = delete;
-
-	template<typename T, typename ... ARGS>
-	T * read(ARGS ... args) const;
-
-	template<typename T>
-	T read_attribute(string const & name) const;
-
-	h5obj operator[](string name) const;
-
-	template<typename T> struct _attr;
-
-	virtual vector<size_t> const & shape() const {
-		throw runtime_error("No shape() implemented");
-	}
-
-	virtual size_t const & shape(int i) const {
-		throw runtime_error("No shape() implemented");
-	}
-
-};
 
 struct _h5dset : public _h5obj {
 //	_h5dset(_h5dset const &) = delete;
@@ -1629,7 +1581,7 @@ struct _h5file : public _h5obj {
 	int fd;
 	uint8_t * data;
 	uint64_t file_size;
-	shared_ptr<file_impl> yeach;
+	shared_ptr<file_impl> _file_impl;
 
 	template<typename T>
 	T get(uint64_t offset) {
@@ -1682,61 +1634,46 @@ struct _h5file : public _h5obj {
 		/* folowing HDF5 ref implementation size_of_offset and size_of_length must be
 		 * 2, 4, 8, 16 or 32. our implementation is limited to 2, 4 and 8 bytes, uint64_t
 		 */
-		yeach = _for_each0<2,4,8>::create(data, version, superblock_offset, size_of_offset, size_of_length);
-		auto sb = yeach->get_superblock();
-		auto root = sb->get_root_object();
-		auto v = root->list();
-		for(auto x: v) {
-			cout << "found key: " << x << endl;
-		}
-
-		auto obj = root->find_object("ssaod550");
-		obj->print_info();
+		_file_impl = _for_each0<2,4,8>::create(data, version, superblock_offset, size_of_offset, size_of_length);
+//		auto sb = yeach->get_superblock();
+//		auto root = sb->get_root_object();
+//		auto v = root->list();
+//		for(auto x: v) {
+//			cout << "found key: " << x << endl;
+//		}
+//
+//		auto obj = root->find_object("ssaod550");
+//		obj->print_info();
 
 	}
 
 	virtual ~_h5file() = default;
 
-};
-
-
-class h5obj {
-	shared_ptr<_h5obj> _ptr;
-
-public:
-
-	h5obj(h5obj const & x) = default;
-	h5obj & operator=(h5obj const &) = default;
-	h5obj(shared_ptr<_h5obj> const & x) : _ptr{x} { }
-
-	h5obj(string const & filename) {
-		_ptr = make_shared<_h5file>(filename);
+	virtual auto operator[](string const & name) const -> h5obj override
+	{
+		return _file_impl->get_superblock()->get_root_object()->operator [](name);
 	}
 
-	virtual ~h5obj() = default;
+	virtual auto shape() const -> vector<size_t> override
+	{
+		return _file_impl->get_superblock()->get_root_object()->shape();
+	}
+
+	virtual auto shape(int i) const -> size_t override
+	{
+		return _file_impl->get_superblock()->get_root_object()->shape(i);
+	}
 
 
-//	template<typename T, typename ... ARGS>
-//	T * read(ARGS ... args) const {
-//		return _ptr->read<T>(args...);
-//	}
-//
-//	template<typename T>
-//	T read_attribute(string const & name) const {
-//		return _ptr->read_attribute<T>(name);
-//	}
-//
-//	h5obj operator[](string const & name) const {
-//		return _ptr->operator [](name);
-//	}
-//
-//	vector<size_t> const & shape() const {
-//		return _ptr->shape();
-//	}
-//
-//	size_t const & shape(int i) const {
-//		return _ptr->shape(i);
-//	}
+	virtual auto keys() const -> vector<char const *> override
+	{
+		return _file_impl->get_superblock()->get_root_object()->keys();
+	}
+
+	virtual void print_info() override
+	{
+		_file_impl->get_superblock()->get_root_object()->print_info();
+	}
 
 };
 
