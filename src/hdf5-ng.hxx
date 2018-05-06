@@ -756,7 +756,7 @@ struct object_v1 : public object {
 	uint8_t * fillvalue;
 
 	uint8_t layout_class;
-	uint8_t * dimensionnality;
+	uint8_t * dimensionality;
 	offset_type data_address;
 	uint32_t * shape_of_chunk;
 	uint32_t * size_of_data_element_of_chunk;
@@ -887,7 +887,7 @@ struct object_v1 : public object {
 		if (version == 1 or version == 2)
 		{
 			layout_class = spec_defs::message_data_layout_v1_spec::layout_class::get(msg);
-			dimensionnality = &spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
+			dimensionality = &spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
 
 			if (layout_class != 0) {
 				data_address = read_at<offset_type>(msg+spec_defs::message_data_layout_v1_spec::size);
@@ -900,57 +900,63 @@ struct object_v1 : public object {
 				size_of_data_element_of_chunk = reinterpret_cast<uint32_t*>(
 						msg + spec_defs::message_data_layout_v1_spec::size
 						+ sizeof(offset_type)
-						+ *dimensionnality * sizeof(uint32_t)
+						+ *dimensionality * sizeof(uint32_t)
 						+ sizeof(uint32_t));
 			} else if (layout_class == 0) { // compact
 				compact_data_size = read_at<uint32_t>(
 						msg + spec_defs::message_data_layout_v1_spec::size
-						+ *dimensionnality * sizeof(offset_type));
+						+ *dimensionality * sizeof(offset_type));
 				compact_data_address = msg
 						+ spec_defs::message_data_layout_v1_spec::size
-						+ *dimensionnality * sizeof(uint32_t)
+						+ *dimensionality * sizeof(uint32_t)
 						+ sizeof(uint32_t);
 			}
 
 
 		} else if (version == 3) {
 			layout_class = spec_defs::message_data_layout_v3_spec::layout_class::get(msg);
-			if (layout_class == 0) {
+			if (layout_class == 0) { // COMPACT
 				compact_data_size = read_at<uint16_t>(msg + spec_defs::message_data_layout_v3_spec::size);
 				compact_data_address = msg
 								+ spec_defs::message_data_layout_v3_spec::size
 								+ sizeof(uint16_t);
-			} else if (layout_class == 1) {
+			} else if (layout_class == 1) { // CONTINUOUS
 				data_address = read_at<offset_type>(msg + spec_defs::message_data_layout_v3_spec::size);
 				size_of_continuous_data = read_at<length_type>(msg + spec_defs::message_data_layout_v3_spec::size + sizeof(offset_type));
-			} else if (layout_class == 2) {
-				dimensionnality = msg + spec_defs::message_data_layout_v3_spec::size;
+			} else if (layout_class == 2) { // CHUNKED
+				dimensionality = msg + spec_defs::message_data_layout_v3_spec::size;
 				data_address = read_at<offset_type>(msg + spec_defs::message_data_layout_v3_spec::size + sizeof(uint8_t));
 				shape_of_chunk = reinterpret_cast<uint32_t*>(
-						msg + spec_defs::message_data_layout_v1_spec::size + sizeof(uint8_t) + sizeof(offset_type));
+						msg
+						+ spec_defs::message_data_layout_v3_spec::size
+						+ sizeof(uint8_t) // dimensionality
+						+ sizeof(offset_type) // data_address
+						);
 				size_of_data_element_of_chunk = reinterpret_cast<uint32_t*>(
-						msg + spec_defs::message_data_layout_v1_spec::size
+						msg + spec_defs::message_data_layout_v3_spec::size
 						+ sizeof(uint8_t)
 						+ sizeof(offset_type)
-						+ *dimensionnality * sizeof(uint32_t));
+						+ *dimensionality * sizeof(uint32_t));
 			}
 		} else if (version == 4) {
 			layout_class = spec_defs::message_data_layout_v4_spec::layout_class::get(msg);
 			if (layout_class == 0) { // COMPACT same as V3
-				compact_data_size = read_at<uint16_t>(msg + spec_defs::message_data_layout_v3_spec::size);
+				compact_data_size = read_at<uint16_t>(msg + spec_defs::message_data_layout_v4_spec::size);
 				compact_data_address = msg
-								+ spec_defs::message_data_layout_v3_spec::size
+								+ spec_defs::message_data_layout_v4_spec::size
 								+ sizeof(uint16_t);
 			} else if (layout_class == 1) { // CONTINUOUS same as V3
-				data_address = read_at<offset_type>(msg + spec_defs::message_data_layout_v3_spec::size);
-				size_of_continuous_data = read_at<length_type>(msg + spec_defs::message_data_layout_v3_spec::size + sizeof(offset_type));
+				data_address = read_at<offset_type>(msg + spec_defs::message_data_layout_v4_spec::size);
+				size_of_continuous_data = read_at<length_type>(msg
+						+ spec_defs::message_data_layout_v4_spec::size
+						+ sizeof(offset_type));
 			} else if (layout_class == 2) { // CHUNKED /!\ not the same as V3
 				// TODO: flags
-				dimensionnality = msg + spec_defs::message_data_layout_v3_spec::size + sizeof(uint8_t);
+				dimensionality = msg + spec_defs::message_data_layout_v4_spec::size + sizeof(uint8_t);
 				// TODO: Dimension Size Encoded Length
 				shape_of_chunk = reinterpret_cast<uint32_t*>(
 						msg
-						+ spec_defs::message_data_layout_v1_spec::size // header
+						+ spec_defs::message_data_layout_v4_spec::size // header
 						+ sizeof(uint8_t) // flags
 						+ sizeof(uint8_t) // dimentionnality
 						+ sizeof(uint8_t) // Dimension Size Encoded Length
@@ -959,11 +965,11 @@ struct object_v1 : public object {
 				// TODO: chunk indexing type
 				uint8_t chunk_indexing_type = read_at<uint8_t>(
 						msg
-						+ spec_defs::message_data_layout_v1_spec::size // header
+						+ spec_defs::message_data_layout_v4_spec::size // header
 						+ sizeof(uint8_t) // flags
 						+ sizeof(uint8_t) // dimentionnality
 						+ sizeof(uint8_t) // Dimension Size Encoded Length
-						+ *dimensionnality * sizeof(uint32_t) // shape_of_chunk;
+						+ *dimensionality * sizeof(uint32_t) // shape_of_chunk;
 						);
 
 				// TODO: parse indexing data
@@ -988,11 +994,11 @@ struct object_v1 : public object {
 
 				data_address = read_at<offset_type>(
 						msg
-						+ spec_defs::message_data_layout_v1_spec::size // header
+						+ spec_defs::message_data_layout_v4_spec::size // header
 						+ sizeof(uint8_t) // flags
 						+ sizeof(uint8_t) // dimentionnality
 						+ sizeof(uint8_t) // Dimension Size Encoded Length
-						+ *dimensionnality * sizeof(uint32_t) // shape_of_chunk;
+						+ *dimensionality * sizeof(uint32_t) // shape_of_chunk;
 						+ sizeof(uint8_t) // index_type
 						+ size_of_index_data
 						);
@@ -1198,12 +1204,12 @@ struct object_v1 : public object {
 			}
 
 			if (shape_of_chunk) {
-				cout << "dimensionnality=" << static_cast<unsigned>(*dimensionnality) << endl;
+				cout << "dimensionality=" << static_cast<unsigned>(*dimensionality) << endl;
 				cout << "shape_of_chunk= {";
-				for(unsigned i = 0; i < *dimensionnality-1; ++i) {
+				for(unsigned i = 0; i < *dimensionality-1; ++i) {
 					cout << shape_of_chunk[i] << ",";
 				}
-				cout << shape_of_chunk[*dimensionnality-1] << "}" << endl;
+				cout << shape_of_chunk[*dimensionality-1] << "}" << endl;
 			}
 
 			if (layout_class == 0) {
