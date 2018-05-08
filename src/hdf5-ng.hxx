@@ -74,6 +74,39 @@ static uint64_t read_at(uint8_t * addr) {
 	return *reinterpret_cast<T*>(addr);
 }
 
+struct slc {
+	int bgn, end, inc; // note: bgn = 0 mean begin, but end = 0 mean end.
+	slc() : bgn{0}, end{0}, inc{1} { } // all
+	slc(int x) : bgn{x}, end{x+1}, inc{1} { } // one value
+	slc(int bgn, int end) : bgn{bgn}, end{end}, inc{1} { } // range of value [bgn, end[
+	slc(int bgn, int end, int inc) : bgn{bgn}, end{end}, inc{inc} { } // range of value with inc
+
+	slc(slc const &) = default;
+	slc & operator=(slc const &) = default;
+
+	slc & update_norm_with_dims(int d) {
+		*this = norm_with_dims(d);
+		return *this;
+	}
+
+	slc norm_with_dims(int d) const {
+		slc r{*this};
+		if (inc >= 0) {
+			if (bgn < 0) { r.bgn = bgn + d; }
+			if (end <= 0) { r.end = end + d; } // 0 mean end
+		} else {
+			if (bgn <= 0) { r.bgn = bgn + d; } // 0 mean end
+			if (end < 0) { r.end = end + d; }
+		}
+		return r;
+	}
+
+	friend ostream & operator<<(ostream & o, slc const & s) {
+		return o << "<slc (" << s.bgn << "," << s.end << "," << s.inc << ") >";
+	}
+
+};
+
 using data_reader_func = uint64_t (*)(uint8_t*);
 static inline data_reader_func get_reader_for(uint8_t size) {
 	switch(size) {
@@ -144,6 +177,8 @@ enum dataset_layout_e {
 	UNDEFX
 };
 
+
+
 struct btree : public file_object {
 
 	virtual ~btree() = default;
@@ -179,6 +214,185 @@ struct object : public file_object, public _h5obj {
 
 	virtual void print_info() override {
 		throw runtime_error("Not implement line:" STR(__LINE__));
+	}
+
+	virtual uint64_t element_size() const {
+		throw runtime_error("Not implement line:" STR(__LINE__));
+	}
+
+	virtual uint8_t * continuous_data() const {
+		throw runtime_error("Not implement line:" STR(__LINE__));
+	}
+
+	virtual uint8_t data_layout() const {
+		throw runtime_error("Not implement line:" STR(__LINE__));
+	}
+
+	template<int R>
+	struct iterator {
+		array<int64_t, R> shape;
+		array<int64_t, R> strides;
+		array<int64_t, R> current;
+		uint8_t * offset;
+
+        /* the begin iterator */
+		iterator(uint8_t * offset, array<int64_t, R> shape, array<int64_t, R> stride) :
+			shape{shape},
+			strides{stride},
+			current{shape},
+			offset{offset}
+		{
+
+		}
+
+		iterator(iterator const &) = default;
+
+		iterator & operator=(iterator const &) = default;
+
+		void _incr() {
+			for(size_t x = R-1; x >= 0; --x) {
+				current[x] -= 1;
+				offset += strides[x];
+				if(current[x] == 0 and x != 0) {
+					current[x] = shape[x];
+					offset -= shape[x]*strides[x];
+				} else {
+					break;
+				}
+			}
+		}
+
+		iterator& operator++() { // prefix
+			_incr();
+			return (*this);
+		}
+
+		iterator operator++(int) { // postfix
+			iterator ret{*this};
+			_incr();
+			return ret;
+		}
+
+		uint8_t * operator *() {
+			return offset;
+		}
+
+		uint8_t * operator *() const {
+			return offset;
+		}
+
+		bool operator==(iterator const & x) const {
+			return offset == x.offset;
+		}
+
+		bool operator!=(iterator const & x) const {
+			return offset != x.offset;
+		}
+
+		int operator-(iterator const & x) const {
+				int d = std::distance(offset, x.offset);
+				int ret = 0;
+				for(size_t i = 0; i < R; ++i) {
+					int count = d / strides[i];
+					ret += count * shape[i];
+					d %= strides[i];
+				}
+				return ret;
+		}
+
+		void print() {
+			for(auto x: strides) {
+				std::cout << x << " ";
+			}
+			for(auto x: current) {
+				std::cout << x << " ";
+			}
+			std::cout << std::endl;
+		}
+
+		friend std::ostream & operator<<(std::ostream & o, iterator const & r) {
+			return o << "<ndarray_base::iterator " << r.offset << " >";
+		}
+
+	};
+
+
+	template<size_t R>
+	void _read_continuous(array<slc, R> const & selection, void * output)
+	{
+		// ony for continuous or compact.
+		uint64_t element_size = this->element_size();
+
+		auto _shape = shape();
+		if (_shape.size() != R)
+			throw EXCEPTION("dataset rank (%d) does not match selection rank (%d)", _shape.size(), R);
+
+		array<int64_t, R> data_shape;
+		for(int i = 0; i < R; ++i) { data_shape[i] = _shape[i]; }
+
+		array<int64_t, R> data_stride;
+		data_stride[R-1] = element_size;
+		for(size_t i = R-1; i > 0; --i) { data_stride[i-1] = data_stride[i]*data_shape[i]; }
+
+		array<int64_t, R> shape;
+		array<int64_t, R> stride;
+		uint8_t * offset = continuous_data();
+		for(size_t i = 0; i < R; ++i) {
+			auto s = selection[i].norm_with_dims(data_shape[i]);
+			offset += data_stride[i]*s.bgn;
+			stride[i] = data_stride[i]*s.inc;
+			shape[i] = (s.end - s.bgn)/s.inc;
+		}
+
+		iterator<R> iter{offset, shape, stride};
+		iterator<R> end{offset + stride[0]*shape[0], shape, stride};
+
+		auto cursor = reinterpret_cast<uint8_t *>(output);
+		while(iter != end) {
+			std::copy(&(*iter)[0], &(*iter)[element_size], cursor);
+			cursor += element_size;
+			++iter;
+		}
+
+	}
+
+	template<size_t R>
+	void _read(array<slc, R> const & selection, void * output)
+	{
+		switch(data_layout()) {
+		case 0: // compact
+			_read_continuous(selection, output);
+			break;
+		case 1: // continuous
+			_read_continuous(selection, output);
+			break;
+		case 2: // chunked
+			// TODO
+			throw runtime_error("CHUNKED data layout not implemented");
+			break;
+		case 3: // virtual
+			// TODO
+			throw runtime_error("VIRTUAL data layout not implemented");
+			break;
+		default:
+			throw runtime_error("unknown data layout");
+		}
+
+	}
+
+	template<typename ... ARGS>
+	struct _dispatch_read;
+
+	template<typename ... ARGS>
+	struct _dispatch_read<void *, ARGS...> {
+		static void exec(object * obj, void * output, ARGS ... args) {
+			obj->_read(array<slc, sizeof...(ARGS)>{slc{args}...}, output);
+		}
+	};
+
+	template<typename ... ARGS>
+	void _read_0(ARGS ... args) {
+		_dispatch_read<ARGS...>::exec(this, args...);
 	}
 
 };
@@ -361,6 +575,11 @@ struct superblock_v1 : public superblock {
 
 	virtual shared_ptr<object> get_root_object() {
 		return file->make_object(root_node_object_address());
+	}
+
+	template<int R>
+	void _read(array<slc, R> const & selection) {
+
 	}
 
 };
@@ -720,14 +939,16 @@ struct object_v1 : public object {
 	uint8_t * fillvalue;
 
 	uint8_t layout_class;
-	uint8_t * dimensionality;
+
+	//
 	offset_type data_address;
+
+	uint8_t * dimensionality;
 	uint32_t * shape_of_chunk;
 	uint32_t * size_of_data_element_of_chunk;
 
 	// compact data optionnal elements
 	uint32_t compact_data_size;
-	uint8_t * compact_data_address;
 
 	uint64_t size_of_continuous_data;
 
@@ -857,6 +1078,11 @@ struct object_v1 : public object {
 
 			if (layout_class != 0) {
 				data_address = read_at<offset_type>(msg+spec_defs::message_data_layout_v1_spec::size);
+			} else {
+				data_address = file->to_offset(msg
+						+ spec_defs::message_data_layout_v1_spec::size
+						+ *dimensionality * sizeof(offset_type)
+						+ sizeof(uint32_t));
 			}
 
 			shape_of_chunk = reinterpret_cast<uint32_t*>(
@@ -872,10 +1098,6 @@ struct object_v1 : public object {
 				compact_data_size = read_at<uint32_t>(
 						msg + spec_defs::message_data_layout_v1_spec::size
 						+ *dimensionality * sizeof(offset_type));
-				compact_data_address = msg
-						+ spec_defs::message_data_layout_v1_spec::size
-						+ *dimensionality * sizeof(uint32_t)
-						+ sizeof(uint32_t);
 			}
 
 
@@ -883,9 +1105,9 @@ struct object_v1 : public object {
 			layout_class = spec_defs::message_data_layout_v3_spec::layout_class::get(msg);
 			if (layout_class == 0) { // COMPACT
 				compact_data_size = read_at<uint16_t>(msg + spec_defs::message_data_layout_v3_spec::size);
-				compact_data_address = msg
+				data_address = file->to_offset(msg
 								+ spec_defs::message_data_layout_v3_spec::size
-								+ sizeof(uint16_t);
+								+ sizeof(uint16_t));
 			} else if (layout_class == 1) { // CONTINUOUS
 				data_address = read_at<offset_type>(msg + spec_defs::message_data_layout_v3_spec::size);
 				size_of_continuous_data = read_at<length_type>(msg + spec_defs::message_data_layout_v3_spec::size + sizeof(offset_type));
@@ -908,9 +1130,9 @@ struct object_v1 : public object {
 			layout_class = spec_defs::message_data_layout_v4_spec::layout_class::get(msg);
 			if (layout_class == 0) { // COMPACT same as V3
 				compact_data_size = read_at<uint16_t>(msg + spec_defs::message_data_layout_v4_spec::size);
-				compact_data_address = msg
+				data_address = file->to_offset(msg
 								+ spec_defs::message_data_layout_v4_spec::size
-								+ sizeof(uint16_t);
+								+ sizeof(uint16_t));
 			} else if (layout_class == 1) { // CONTINUOUS same as V3
 				data_address = read_at<offset_type>(msg + spec_defs::message_data_layout_v4_spec::size);
 				size_of_continuous_data = read_at<length_type>(msg
@@ -1042,17 +1264,29 @@ struct object_v1 : public object {
 
 	virtual vector<size_t> shape() const override {
 		if (_shape) {
-			return vector<size_t>{&_shape[0], &_shape[*rank-1]};
+			return vector<size_t>{&_shape[0], &_shape[*rank]};
 		}
 		throw runtime_error("shape is not defined");
 	}
 
 	virtual size_t shape(int i) const override {
 		if (not _shape)
-			throw runtime_error("shape is not defined");
+			throw EXCEPTION("Shape is not defined");
 		if (i >= * rank)
-			throw runtime_error("request shape is out of bounds");
+			throw EXCEPTION("request shape is out of bounds (%d)", static_cast<int>(*rank));
 		return _shape[i];
+	}
+
+	virtual uint64_t element_size() const override {
+		return *size_of_elements;
+	}
+
+	virtual uint8_t * continuous_data() const override {
+		return file->to_address(data_address);
+	}
+
+	virtual uint8_t data_layout() const override {
+		return layout_class;
 	}
 
 	char const * _get_link_name(uint64_t offset) const {
@@ -1196,7 +1430,7 @@ struct object_v1 : public object {
 			if (layout_class == 0) {
 				cout << "compact layout" << endl;
 				cout << "size of compact data =" << compact_data_size << endl;
-				cout << "address of compact data =" << compact_data_address << endl;
+				cout << "dataset address =" << data_address << endl;
 			} else if (layout_class == 1) {
 				cout << "continuous layout" << endl;
 				cout << "dataset address = " << data_address << endl;
@@ -1693,6 +1927,11 @@ struct _h5file : public _h5obj {
 //		return ret[0];
 //	}
 //};
+
+template<typename ... ARGS>
+void h5obj::read(ARGS ... args) {
+	dynamic_pointer_cast<object>(_ptr)->_read_0(args...);
+}
 
 } // hdf5ng
 
