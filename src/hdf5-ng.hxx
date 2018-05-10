@@ -372,7 +372,7 @@ struct object : public file_object, public _h5obj {
 			auto s = selection[i].norm_with_dims(data_shape[i]);
 			offset += data_stride[i]*s.bgn;
 			stride[i] = data_stride[i]*s.inc;
-			shape[i] = (s.end - s.bgn)/s.inc;
+			shape[i] = ((s.end - s.bgn) - 1)/s.inc + 1;
 		}
 
 		iterator<R> iter{offset, shape, stride};
