@@ -5,7 +5,12 @@ h5ng is an unofficial implementation of hdf5 reader and writer. The library targ
 
 h5ng is currently in alpha stage, the library only as a partial support of reading hdf5.
 
+The name is not definitive, maybe I will switch to h5xx.
 
+The milestone are:
+ - Implement reading, Group/Attributes/Dataset.
+ - Implement creating data set and writing data, continuous and chunked
+ - Implement some statistics tool.
 
 
 
