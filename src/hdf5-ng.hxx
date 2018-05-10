@@ -301,17 +301,6 @@ struct object : public file_object, public _h5obj {
 			return offset != x.offset;
 		}
 
-		int operator-(iterator const & x) const {
-				int d = std::distance(offset, x.offset);
-				int ret = 0;
-				for(size_t i = 0; i < R; ++i) {
-					int count = d / strides[i];
-					ret += count * shape[i];
-					d %= strides[i];
-				}
-				return ret;
-		}
-
 		void print() {
 			for(auto x: strides) {
 				std::cout << x << " ";
@@ -323,7 +312,7 @@ struct object : public file_object, public _h5obj {
 		}
 
 		friend std::ostream & operator<<(std::ostream & o, iterator const & r) {
-			return o << "<ndarray_base::iterator " << r.offset << " >";
+			return o << "<iterator " << r.offset << " >";
 		}
 
 	};
@@ -400,7 +389,7 @@ struct object : public file_object, public _h5obj {
 
 
 	template<size_t R>
-	void _read_chunked(array<slc, R> const & selection, void * output)
+	void _read_chunked(array<slc, R> selection, void * output)
 	{
 		// ony for continuous or compact.
 		uint64_t element_size = this->element_size();
@@ -410,6 +399,11 @@ struct object : public file_object, public _h5obj {
 			throw EXCEPTION("dataset rank (%d) does not match selection rank (%d)", data_shape.size(), R);
 
 		auto chunk_shape = shape_of_chunk();
+
+		// normalize
+		for(size_t i = 0; i < R; ++i) {
+			selection[i] = selection[i].norm_with_dims(data_shape[i]);
+		}
 
 		array<uint64_t, R> chunk_stride;
 		chunk_stride[R-1] = element_size;
@@ -794,20 +788,20 @@ struct group_btree_v1 : public file_object {
 	group_btree_v1 & operator=(group_btree_v1 const & x) = default;
 
 	/* K+1 keys */
-	length_type get_key(int i) {
+	length_type get_key(int i) const {
 		return *reinterpret_cast<length_type*>(&memory_addr[spec::size+i*(SIZE_OF_OFFSET+SIZE_OF_LENGTH)]);
 	}
 
 	/* K key */
-	offset_type get_node(int i) {
+	offset_type get_node(int i) const {
 		return *reinterpret_cast<offset_type*>(&memory_addr[spec::size+i*(SIZE_OF_OFFSET+SIZE_OF_LENGTH)+SIZE_OF_LENGTH]);
 	}
 
-	uint64_t get_depth() {
+	uint64_t get_depth() const {
 		return spec::node_level::get(memory_addr);
 	}
 
-	uint64_t get_entries_count() {
+	uint64_t get_entries_count() const {
 		return spec::entries_used::get(memory_addr);
 	}
 
@@ -1437,36 +1431,28 @@ struct object_v1 : public object {
 
 	}
 
+	size_t _find_sub_group(group_btree_v1 const & cur, char const * key) const {
+		for(size_t i = 0; i < cur.get_entries_count(); ++i) {
+			char const * link_name = _get_link_name(cur.get_key(i+1));
+			if (std::strcmp(key, link_name) <= 0)
+				return i;
+		}
+		throw EXCEPTION("This should never append");
+	}
+
 	/** return group_symbole_table that content the key **/
 	offset_type _group_find_key(char const * key) const {
-		stack<group_btree_v1> stack;
-		uint64_t nK = file->get_superblock()->group_internal_node_K();
-		uint64_t lK = file->get_superblock()->group_leaf_node_K();
+		group_btree_v1 cur{file, file->to_address(group_btree_v1_root)};
+		if (std::strcmp(key, _get_link_name(cur.get_key(cur.get_entries_count()))) > 0)
+			throw EXCEPTION("Key `%s' not found", key);
 
-		cout << "nK = " << nK << " lK = " << lK << endl;
-
-		stack.push(group_btree_v1{file, file->to_address(group_btree_v1_root)});
-		while(not stack.empty()) {
-			group_btree_v1 cur = stack.top();
-			cout << std::dec << "process node depth=" << cur.get_depth() << " entries_count=" << cur.get_entries_count() << endl;
-			stack.pop();
-			if (cur.get_depth() == 0) {
-				//assert(cur.get_entries_count() <= lK);
-				for(int i = 0; i < cur.get_entries_count(); ++i) {
-					char const * link_name = _get_link_name(cur.get_key(i+1));
-					int cmp = std::strcmp(key, link_name);
-					if (cmp <= 0)
-						return cur.get_node(i);
-				}
-			} else {
-				//assert(cur.get_entries_count() <= nK);
-				for(int i = 0; i < cur.get_entries_count(); ++i) {
-					stack.push(group_btree_v1{file, file->to_address(cur.get_node(i))});
-				}
-			}
+		while(cur.get_depth() != 0) {
+			size_t i = _find_sub_group(cur, key);
+			cur = group_btree_v1{file, file->to_address(cur.get_node(i))};
 		}
 
-		throw EXCEPTION("TODO");
+		size_t i = _find_sub_group(cur, key);
+		return cur.get_node(i);
 
 	}
 
