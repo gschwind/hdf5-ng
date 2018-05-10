@@ -221,6 +221,14 @@ struct b_tree_v1_hdr_spec : public type_spec {
 
 };
 
+struct b_tree_v1_chunk_key_spec : public type_spec {
+	using chunk_size                = spec<uint32_t,    none>;
+	using filter_mask               = spec<uint32_t,    chunk_size>;
+
+	enum : uint64_t { size = last<filter_mask>::size };
+
+};
+
 struct b_tree_v2_hdr_spec : public type_spec {
 	using signature                            = spec<uint8_t[4],   none>;
 	using version                              = spec<uint8_t,      signature>;

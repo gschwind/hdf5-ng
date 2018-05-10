@@ -205,27 +205,39 @@ struct object : public file_object, public _h5obj {
 	}
 
 	virtual size_t shape(int i) const override {
-		throw runtime_error("Not implement line:" STR(__LINE__));
+		throw EXCEPTION("Not implemented");
 	}
 
 	virtual auto keys() const -> vector<char const *> override {
-		throw runtime_error("Not implement line:" STR(__LINE__));
+		throw EXCEPTION("Not implemented");
 	}
 
 	virtual void print_info() override {
-		throw runtime_error("Not implement line:" STR(__LINE__));
+		throw EXCEPTION("Not implemented");
 	}
 
 	virtual uint64_t element_size() const {
-		throw runtime_error("Not implement line:" STR(__LINE__));
+		throw EXCEPTION("Not implemented");
 	}
 
 	virtual uint8_t * continuous_data() const {
-		throw runtime_error("Not implement line:" STR(__LINE__));
+		throw EXCEPTION("Not implemented");
+	}
+
+	virtual uint8_t * fill_value() const {
+		throw EXCEPTION("Not implemented");
 	}
 
 	virtual uint8_t data_layout() const {
-		throw runtime_error("Not implement line:" STR(__LINE__));
+		throw EXCEPTION("Not implemented");
+	}
+
+	virtual vector<size_t> shape_of_chunk() const {
+		throw EXCEPTION("Not implemented");
+	}
+
+	virtual uint8_t * dataset_find_chunk(uint64_t const * key) const {
+		throw EXCEPTION("Not implemented");
 	}
 
 	template<int R>
@@ -317,18 +329,48 @@ struct object : public file_object, public _h5obj {
 	};
 
 
+	template<int R>
+	struct simple_iterator {
+		array<slc, R> const slices;
+		array<uint64_t, R> current;
+
+        /* the begin iterator */
+		simple_iterator(array<slc, R> const & slices) :
+			slices{slices}
+		{
+			for(int i = 0; i < R; ++i) { current[i] = slices[i].bgn; }
+		}
+
+		simple_iterator(simple_iterator const &) = default;
+		simple_iterator & operator=(simple_iterator const &) = default;
+
+		void incr() {
+			for(size_t x = R-1; x >= 0; --x) {
+				current[x] += slices[x].inc;
+				if(current[x] >= slices[x].end and x != 0) {
+					current[x] = slices[x].bgn;
+				} else {
+					break;
+				}
+			}
+		}
+
+		bool is_end() {
+			return current[0] >= slices[0].end;
+		}
+
+	};
+
+
 	template<size_t R>
 	void _read_continuous(array<slc, R> const & selection, void * output)
 	{
 		// ony for continuous or compact.
 		uint64_t element_size = this->element_size();
 
-		auto _shape = shape();
-		if (_shape.size() != R)
-			throw EXCEPTION("dataset rank (%d) does not match selection rank (%d)", _shape.size(), R);
-
-		array<int64_t, R> data_shape;
-		for(int i = 0; i < R; ++i) { data_shape[i] = _shape[i]; }
+		auto data_shape = shape();
+		if (data_shape.size() != R)
+			throw EXCEPTION("dataset rank (%d) does not match selection rank (%d)", data_shape.size(), R);
 
 		array<int64_t, R> data_stride;
 		data_stride[R-1] = element_size;
@@ -356,6 +398,48 @@ struct object : public file_object, public _h5obj {
 
 	}
 
+
+	template<size_t R>
+	void _read_chunked(array<slc, R> const & selection, void * output)
+	{
+		// ony for continuous or compact.
+		uint64_t element_size = this->element_size();
+
+		auto data_shape = shape();
+		if (data_shape.size() != R)
+			throw EXCEPTION("dataset rank (%d) does not match selection rank (%d)", data_shape.size(), R);
+
+		auto chunk_shape = shape_of_chunk();
+
+		array<uint64_t, R> chunk_stride;
+		chunk_stride[R-1] = element_size;
+		for(size_t i = R-1; i > 0; --i) { chunk_stride[i-1] = chunk_shape[i]*chunk_stride[i]; }
+
+		auto cursor = reinterpret_cast<uint8_t *>(output);
+		for(simple_iterator<R> iter{selection}; not iter.is_end(); iter.incr()) {
+			array<uint64_t, R> chunk_offset;
+			for(size_t i = 0; i < R; ++i) { chunk_offset[i] = iter.current[i] - iter.current[i]%chunk_shape[i]; }
+
+			uint8_t * chunk = dataset_find_chunk(&chunk_offset[0]);
+			if (chunk) {
+				for(size_t i = 0; i < R; ++i) {
+					chunk += chunk_stride[i]*(iter.current[i]-chunk_offset[i]);
+				}
+				std::copy(&chunk[0], &chunk[element_size], cursor);
+			} else {
+				if (fill_value()) {
+					uint8_t * x = fill_value();
+					std::copy(&x[0], &x[element_size], cursor);
+				} else {
+					std::fill(&cursor[0], &cursor[element_size], -1);
+				}
+			}
+			cursor += element_size;
+		}
+
+	}
+
+
 	template<size_t R>
 	void _read(array<slc, R> const & selection, void * output)
 	{
@@ -368,7 +452,7 @@ struct object : public file_object, public _h5obj {
 			break;
 		case 2: // chunked
 			// TODO
-			throw runtime_error("CHUNKED data layout not implemented");
+			_read_chunked(selection, output);
 			break;
 		case 3: // virtual
 			// TODO
@@ -729,6 +813,41 @@ struct group_btree_v1 : public file_object {
 
 };
 
+struct chunk_btree_v1 : public file_object {
+	using spec = typename spec_defs::b_tree_v1_hdr_spec;
+
+	uint64_t key_length;
+
+	chunk_btree_v1(file_impl * file, uint8_t * addr, uint64_t dimensionality) : file_object{file, addr}, key_length{8+8*(dimensionality)} { }
+
+	chunk_btree_v1(chunk_btree_v1 const &) = default;
+
+	chunk_btree_v1 & operator=(chunk_btree_v1 const & x) = default;
+
+	/* K+1 keys */
+	uint8_t * get_key(int i) const {
+		return &memory_addr[spec::size+i*(SIZE_OF_OFFSET+key_length)];
+	}
+
+	/* K key */
+	offset_type get_node(int i) const {
+		return *reinterpret_cast<offset_type*>(&memory_addr[spec::size+i*(SIZE_OF_OFFSET+key_length)+key_length]);
+	}
+
+	uint64_t get_depth() const {
+		return spec::node_level::get(memory_addr);
+	}
+
+	uint64_t get_entries_count() const {
+		return spec::entries_used::get(memory_addr);
+	}
+
+	length_type * get_offset(int i) const {
+		return reinterpret_cast<length_type*>(get_key(i)+spec_defs::b_tree_v1_chunk_key_spec::size);
+	}
+
+};
+
 struct group_symbol_table_entry {
 	using spec = typename spec_defs::group_symbol_table_entry_spec;
 
@@ -926,8 +1045,8 @@ struct object_v1 : public object {
 
 	uint64_t K;
 	shared_ptr<local_heap> lheap;
-	offset_type btree_root;
-
+	offset_type group_btree_v1_root;
+	offset_type chunk_btree_v1_root;
 
 	uint8_t * rank;
 	length_type * _shape;
@@ -944,7 +1063,7 @@ struct object_v1 : public object {
 	offset_type data_address;
 
 	uint8_t * dimensionality;
-	uint32_t * shape_of_chunk;
+	uint32_t * _shape_of_chunk;
 	uint32_t * size_of_data_element_of_chunk;
 
 	// compact data optionnal elements
@@ -967,7 +1086,7 @@ struct object_v1 : public object {
 	}
 
 	object_v1(file_impl * file, uint8_t * addr) : object{file, addr} {
-		btree_root = undef_offset;
+		group_btree_v1_root = undef_offset;
 
 		cout << "creating object v1, object cache size = TODO" << endl;
 
@@ -1085,7 +1204,7 @@ struct object_v1 : public object {
 						+ sizeof(uint32_t));
 			}
 
-			shape_of_chunk = reinterpret_cast<uint32_t*>(
+			_shape_of_chunk = reinterpret_cast<uint32_t*>(
 					msg + spec_defs::message_data_layout_v1_spec::size + ((layout_class==0)?0:sizeof(offset_type)));
 
 			if(layout_class == 2) { // chunked
@@ -1113,8 +1232,8 @@ struct object_v1 : public object {
 				size_of_continuous_data = read_at<length_type>(msg + spec_defs::message_data_layout_v3_spec::size + sizeof(offset_type));
 			} else if (layout_class == 2) { // CHUNKED
 				dimensionality = msg + spec_defs::message_data_layout_v3_spec::size;
-				data_address = read_at<offset_type>(msg + spec_defs::message_data_layout_v3_spec::size + sizeof(uint8_t));
-				shape_of_chunk = reinterpret_cast<uint32_t*>(
+				chunk_btree_v1_root = read_at<offset_type>(msg + spec_defs::message_data_layout_v3_spec::size + sizeof(uint8_t));
+				_shape_of_chunk = reinterpret_cast<uint32_t*>(
 						msg
 						+ spec_defs::message_data_layout_v3_spec::size
 						+ sizeof(uint8_t) // dimensionality
@@ -1142,7 +1261,7 @@ struct object_v1 : public object {
 				// TODO: flags
 				dimensionality = msg + spec_defs::message_data_layout_v4_spec::size + sizeof(uint8_t);
 				// TODO: Dimension Size Encoded Length
-				shape_of_chunk = reinterpret_cast<uint32_t*>(
+				_shape_of_chunk = reinterpret_cast<uint32_t*>(
 						msg
 						+ spec_defs::message_data_layout_v4_spec::size // header
 						+ sizeof(uint8_t) // flags
@@ -1214,7 +1333,7 @@ struct object_v1 : public object {
 				<< spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg)
 				<< endl;
 		lheap = file->make_local_heap(spec_defs::message_symbole_table_spec::local_heap_address::get(msg));
-		btree_root = spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg);
+		group_btree_v1_root = spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg);
 	}
 
 	uint8_t * parse_message(uint8_t * current_message) {
@@ -1266,7 +1385,7 @@ struct object_v1 : public object {
 		if (_shape) {
 			return vector<size_t>{&_shape[0], &_shape[*rank]};
 		}
-		throw runtime_error("shape is not defined");
+		throw EXCEPTION("shape is not defined");
 	}
 
 	virtual size_t shape(int i) const override {
@@ -1285,8 +1404,19 @@ struct object_v1 : public object {
 		return file->to_address(data_address);
 	}
 
+	virtual uint8_t * fill_value() const override {
+		return fillvalue;
+	}
+
 	virtual uint8_t data_layout() const override {
 		return layout_class;
+	}
+
+	virtual vector<size_t> shape_of_chunk() const override {
+		if (_shape_of_chunk) {
+			return vector<size_t>{&_shape_of_chunk[0], &_shape_of_chunk[*rank]};
+		}
+		throw EXCEPTION("shape_of_chunk is not defined");
 	}
 
 	char const * _get_link_name(uint64_t offset) const {
@@ -1315,7 +1445,7 @@ struct object_v1 : public object {
 
 		cout << "nK = " << nK << " lK = " << lK << endl;
 
-		stack.push(group_btree_v1{file, file->to_address(btree_root)});
+		stack.push(group_btree_v1{file, file->to_address(group_btree_v1_root)});
 		while(not stack.empty()) {
 			group_btree_v1 cur = stack.top();
 			cout << std::dec << "process node depth=" << cur.get_depth() << " entries_count=" << cur.get_entries_count() << endl;
@@ -1336,21 +1466,75 @@ struct object_v1 : public object {
 			}
 		}
 
-		throw runtime_error("TODO " STR(__LINE__));
+		throw EXCEPTION("TODO");
+
+	}
+
+	template<typename T0, typename T1>
+	static int chunk_offset_cmp(T0 const * a, T1 const * b, uint64_t rank) {
+		for(uint64_t i = 0; i < rank; ++i) {
+			if(a[i] == b[i]) continue;
+			else if (a[i] > b[i]) { return 1; }
+			else if (a[i] < b[i]) { return -1; }
+		}
+		return 0;
+	}
+
+	bool key_is_in_chunk(uint64_t const * key, length_type const * offset) const {
+		for(int i = 0; i < *rank; ++i) {
+			if(key[i] >= (offset[i]+_shape_of_chunk[i])) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	size_t _find_sub_chunk(chunk_btree_v1 const & cur, uint64_t const * key) const {
+		size_t i = cur.get_entries_count()-1;
+		while (i >= 0) {
+			length_type * offset = cur.get_offset(i);
+			if (chunk_offset_cmp(key, offset, *rank) >= 0) {
+				break;
+			}
+			--i;
+		}
+		return i;
+	}
+
+	virtual uint8_t * dataset_find_chunk(uint64_t const * key) const override {
+
+		chunk_btree_v1 cur{file, file->to_address(chunk_btree_v1_root), *dimensionality};
+
+		// Are we bellow the first chunk ?
+		if (chunk_offset_cmp(key, cur.get_offset(0), *rank) < 0) {
+			return nullptr;
+		}
+
+		while(cur.get_depth() != 0) {
+			size_t i = _find_sub_chunk(cur, key);
+			cur = chunk_btree_v1{file, file->to_address(cur.get_node(i)), *dimensionality};
+		}
+
+		size_t i = _find_sub_chunk(cur, key);
+		if (chunk_offset_cmp(key, cur.get_offset(i), *rank) == 0) { // check if we are within the chunk
+			return file->to_address(cur.get_node(i));
+		} else {
+			return nullptr;
+		}
 
 	}
 
 	virtual auto keys() const -> vector<char const *> override {
 
-		if(btree_root == undef_offset)
+		if(group_btree_v1_root == undef_offset)
 			return vector<char const *>{};
 
 		vector<char const *> ret;
 		stack<group_btree_v1> stack;
 
 		vector<offset_type> group_symbole_tables;
-		cout << "btree-root = " << std::hex << btree_root << std::dec << endl;
-		stack.push(group_btree_v1{file, file->to_address(btree_root)});
+		cout << "btree-root = " << std::hex << group_btree_v1_root << std::dec << endl;
+		stack.push(group_btree_v1{file, file->to_address(group_btree_v1_root)});
 		while(not stack.empty()) {
 			group_btree_v1 cur = stack.top();
 			cout << std::dec << "process node depth=" << cur.get_depth() << " entries_count=" << cur.get_entries_count() << endl;
@@ -1418,13 +1602,13 @@ struct object_v1 : public object {
 				cout << "do not has fillvalue" << endl;
 			}
 
-			if (shape_of_chunk) {
+			if (_shape_of_chunk) {
 				cout << "dimensionality=" << static_cast<unsigned>(*dimensionality) << endl;
 				cout << "shape_of_chunk= {";
 				for(unsigned i = 0; i < *dimensionality-1; ++i) {
-					cout << shape_of_chunk[i] << ",";
+					cout << _shape_of_chunk[i] << ",";
 				}
-				cout << shape_of_chunk[*dimensionality-1] << "}" << endl;
+				cout << _shape_of_chunk[*dimensionality-1] << "}" << endl;
 			}
 
 			if (layout_class == 0) {

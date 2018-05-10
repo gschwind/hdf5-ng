@@ -22,11 +22,19 @@ int main(int argc, char const ** argv) {
 		cur.print_info();
 	}
 
-	cout << "READ DATA" << endl;
+	cout << "READ DATA 0" << endl;
 
 	float * out = new float[100];
-	hf["set"].read(reinterpret_cast<void*>(out), h5ng::slc(0,1), h5ng::slc(5,6), h5ng::slc(0,100,2));
-	for(int i = 0; i < 50; ++i) {
+	hf["set_continuous"].read(reinterpret_cast<void*>(out), h5ng::slc(0,1), h5ng::slc(5,9,3), h5ng::slc(0,100,2));
+	for(int i = 0; i < 100; ++i) {
+		cout << out[i] << endl;
+		out[i] = -1;
+	}
+
+	cout << "READ DATA 1" << endl;
+
+	hf["set_chunked"].read(reinterpret_cast<void*>(out), h5ng::slc(0,1), h5ng::slc(5,9,3), h5ng::slc(0,100,2));
+	for(int i = 0; i < 100; ++i) {
 		cout << out[i] << endl;
 	}
 
