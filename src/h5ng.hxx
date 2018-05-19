@@ -73,10 +73,12 @@ struct _h5obj {
 	_h5obj(_h5obj const &) = delete;
 	_h5obj & operator=(_h5obj const &) = delete;
 
+	virtual auto get_id() const -> uint64_t = 0;
 	virtual auto operator[](string const & name) const -> h5obj = 0;
 	virtual auto shape() const -> vector<size_t> = 0;
 	virtual auto shape(int i) const -> size_t = 0;
 	virtual auto keys() const -> vector<char const *> = 0;
+	virtual auto list_attributes() const -> vector<char const *> = 0;
 	virtual void print_info() = 0;
 
 };
@@ -95,8 +97,20 @@ public:
 
 	virtual ~h5obj() = default;
 
+	bool operator==(h5obj const & obj) const {
+		return obj.get_id() == get_id();
+	}
+
 	vector<char const *> keys() {
 		return _ptr->keys();
+	}
+
+	vector<char const *> list_attributes() {
+		return _ptr->list_attributes();
+	}
+
+	uint64_t get_id() const {
+		return _ptr->get_id();
 	}
 
 	h5obj operator[](string const & name) const {

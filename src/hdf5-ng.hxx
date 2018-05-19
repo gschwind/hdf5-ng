@@ -196,12 +196,16 @@ struct object : public file_object, public _h5obj {
 
 	virtual ~object() = default;
 
+	virtual auto get_id() const -> uint64_t override {
+		throw EXCEPTION("Not implemented");
+	}
+
 	virtual auto operator[](string const & name) const -> h5obj override {
-		throw runtime_error("Not implement line:" STR(__LINE__));
+		throw EXCEPTION("Not implemented");
 	}
 
 	virtual vector<size_t> shape() const override {
-		throw runtime_error("Not implement line:" STR(__LINE__));
+		throw EXCEPTION("Not implemented");
 	}
 
 	virtual size_t shape(int i) const override {
@@ -209,6 +213,10 @@ struct object : public file_object, public _h5obj {
 	}
 
 	virtual auto keys() const -> vector<char const *> override {
+		throw EXCEPTION("Not implemented");
+	}
+
+	virtual auto list_attributes() const -> vector<char const *> override {
 		throw EXCEPTION("Not implemented");
 	}
 
@@ -1370,6 +1378,10 @@ struct object_v1 : public object {
 
 	}
 
+	virtual auto get_id() const -> uint64_t override {
+		return file->to_offset(memory_addr);
+	}
+
 	virtual auto operator[](string const & name) const -> h5obj override {
 		auto offset = _group_find(name.c_str());
 		return h5obj{file->make_object(offset)};
@@ -1427,7 +1439,7 @@ struct object_v1 : public object {
 				return symbol_table_entry->offset_header_address();
 		}
 
-		throw runtime_error("TODO " STR(__LINE__));
+		throw EXCEPTION("key `%s' not found", key);
 
 	}
 
@@ -1547,6 +1559,11 @@ struct object_v1 : public object {
 
 		return ret;
 
+	}
+
+	virtual auto list_attributes() const -> vector<char const *> override {
+		vector<char const *> ret;
+		return ret;
 	}
 
 	virtual void print_info() {
@@ -2053,6 +2070,11 @@ struct _h5file : public _h5obj {
 
 	virtual ~_h5file() = default;
 
+	virtual auto get_id() const -> uint64_t override
+	{
+		return 0u;
+	}
+
 	virtual auto operator[](string const & name) const -> h5obj override
 	{
 		return _file_impl->get_superblock()->get_root_object()->operator [](name);
@@ -2072,6 +2094,11 @@ struct _h5file : public _h5obj {
 	virtual auto keys() const -> vector<char const *> override
 	{
 		return _file_impl->get_superblock()->get_root_object()->keys();
+	}
+
+	virtual auto list_attributes() const -> vector<char const *> override
+	{
+		return _file_impl->get_superblock()->get_root_object()->list_attributes();
 	}
 
 	virtual void print_info() override
