@@ -220,7 +220,7 @@ struct object : public file_object, public _h5obj {
 		throw EXCEPTION("Not implemented");
 	}
 
-	virtual void print_info() override {
+	virtual void print_info() const override {
 		throw EXCEPTION("Not implemented");
 	}
 
@@ -1073,7 +1073,7 @@ struct object_v1 : public object {
 
 	uint64_t size_of_continuous_data;
 
-	uint8_t * first_message() {
+	uint8_t * first_message() const {
 		uint64_t first_message_offset = file->to_offset(&memory_addr[spec::size]);
 
 		// message in v1 are aligned, compute alignment to 8-bytes boundary
@@ -1563,10 +1563,43 @@ struct object_v1 : public object {
 
 	virtual auto list_attributes() const -> vector<char const *> override {
 		vector<char const *> ret;
+
+		uint64_t msg_count = spec::total_number_of_header_message::get(memory_addr);
+		uint8_t * current_message = first_message();
+
+		while(msg_count > 0ul) {
+			uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
+			uint16_t message_size   = spec_defs::message_header_v1_spec::size_of_message::get(current_message);
+			uint8_t message_flags   = spec_defs::message_header_v1_spec::flags::get(current_message);
+			cout << "found mesage <@" << static_cast<void*>(current_message)
+					<< " type = 0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(message_type) << std::hex
+					<< " size=" << message_size
+					<< " flags=" << std::hex << static_cast<int>(message_flags) << ">" << endl;
+
+			if (message_type == 0x000C) {
+				uint8_t * message_body = current_message+spec_defs::message_header_v1_spec::size;
+				auto version = spec_defs::message_attribute_v1_spec::version::get(message_body);
+
+				if(version == 1) {
+					ret.push_back(reinterpret_cast<char *>(message_body+spec_defs::message_attribute_v1_spec::size));
+				} else {
+					throw EXCEPTION("Not implemented");
+				}
+
+			}
+
+			// next message
+			current_message = current_message
+					+ spec_defs::message_header_v1_spec::size
+					+ spec_defs::message_header_v1_spec::size_of_message::get(current_message);
+			--msg_count;
+		}
+
 		return ret;
 	}
 
-	virtual void print_info() {
+	virtual void print_info() const override {
+		cerr << "XXXXXXXXXXXXXXXX" << endl;
 		if(has_data_set) {
 			cout << std::dec;
 			cout << "rank = " << static_cast<unsigned>(*rank) << endl;
@@ -1599,7 +1632,7 @@ struct object_v1 : public object {
 				cout << "size_of_elements= " << static_cast<unsigned>(*size_of_elements) << endl;
 			}
 
-			if( fillvalue) {
+			if (fillvalue) {
 				cout << "has_fillvalue" << endl;
 			} else {
 				cout << "do not has fillvalue" << endl;
@@ -1625,8 +1658,15 @@ struct object_v1 : public object {
 				cout << "chunked layout (btree-v1)" << endl;
 				cout << "dataset address = " << data_address << endl;
 			}
-
 		}
+
+		auto attributes = list_attributes();
+
+		cout << "Attributes:" << endl;
+		for (auto a: attributes) {
+			cout << a << endl;
+		}
+
 	}
 
 
@@ -2056,15 +2096,6 @@ struct _h5file : public _h5obj {
 		 * 2, 4, 8, 16 or 32. our implementation is limited to 2, 4 and 8 bytes, uint64_t
 		 */
 		_file_impl = _for_each0<2,4,8>::create(data, version, superblock_offset, size_of_offset, size_of_length);
-//		auto sb = yeach->get_superblock();
-//		auto root = sb->get_root_object();
-//		auto v = root->list();
-//		for(auto x: v) {
-//			cout << "found key: " << x << endl;
-//		}
-//
-//		auto obj = root->find_object("ssaod550");
-//		obj->print_info();
 
 	}
 
@@ -2101,7 +2132,7 @@ struct _h5file : public _h5obj {
 		return _file_impl->get_superblock()->get_root_object()->list_attributes();
 	}
 
-	virtual void print_info() override
+	virtual void print_info() const override
 	{
 		_file_impl->get_superblock()->get_root_object()->print_info();
 	}

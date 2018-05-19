@@ -369,6 +369,17 @@ struct message_symbole_table_spec : public type_spec {
 	enum : uint64_t { size = last<local_heap_address>::size };
 };
 
+// Layout: Attribute Message (Version 1) #0x000C
+struct message_attribute_v1_spec : public type_spec {
+	using version             = spec<uint8_t,  none>;
+	using reserved            = spec<uint8_t, version>;
+	using name_size           = spec<uint16_t, reserved>;
+	using datatype_size       = spec<uint16_t, name_size>;
+	using dataspace_size      = spec<uint16_t, datatype_size>;
+	// optional fields
+	enum : uint64_t { size = last<dataspace_size>::size };
+};
+
 // Layout: Version 2 B-tree, Type 1 Record Layout - Indirectly Accessed, Non-filtered, ‘Huge’ Fractal Heap Objects
 struct btree_v2_record_type1 : public type_spec {
 	using address              = spec<offset_type,   none>;

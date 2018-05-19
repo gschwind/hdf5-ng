@@ -79,7 +79,7 @@ struct _h5obj {
 	virtual auto shape(int i) const -> size_t = 0;
 	virtual auto keys() const -> vector<char const *> = 0;
 	virtual auto list_attributes() const -> vector<char const *> = 0;
-	virtual void print_info() = 0;
+	virtual void print_info() const = 0;
 
 };
 
@@ -125,7 +125,7 @@ public:
 		return _ptr->shape(i);
 	}
 
-	void print_info() {
+	void print_info() const {
 		_ptr->print_info();
 	}
 
