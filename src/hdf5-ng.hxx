@@ -55,7 +55,7 @@ static uint64_t const OFFSET_V3_SIZE_OF_OFFSET =  9;
 static uint64_t const OFFSET_V3_SIZE_OF_LENGTH = 10;
 
 static uint64_t const OFFSET_V1_OBJECT_HEADER_VERSION = 0;
-static uint64_t const OFFSET_V2_OBJECT_HEADER_VERSION = 8;
+static uint64_t const OFFSET_V2_OBJECT_HEADER_VERSION = 4;
 
 struct _named_tuple_0 {
 	uint64_t offset_of_size_offset;
