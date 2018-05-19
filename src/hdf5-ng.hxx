@@ -1073,35 +1073,25 @@ struct object_v1 : public object {
 
 	uint64_t size_of_continuous_data;
 
-	uint8_t * first_message() const {
+	uint64_t first_message() const {
 		uint64_t first_message_offset = file->to_offset(&memory_addr[spec::size]);
-
 		// message in v1 are aligned, compute alignment to 8-bytes boundary
-		if (first_message_offset & 0x0000000000000007ul) {
-			first_message_offset &= ~0x0000000000000007ul;
-			first_message_offset += 0x0000000000000008ul;
-			return file->to_address(first_message_offset);
-		} else {
-			// already aligned;
-			return &memory_addr[spec::size];
-		}
+		first_message_offset -= 1ul;
+		first_message_offset &= ~0x0000000000000007ul;
+		first_message_offset += 0x0000000000000008ul;
+		return first_message_offset;
 	}
 
 	object_v1(file_impl * file, uint8_t * addr) : object{file, addr} {
 		group_btree_v1_root = undef_offset;
+		has_group_btree = false;
+		rank = 0;
+		layout_class = -1;
+		dimensionality = 0;
+		size_of_continuous_data = 0;
 
 		cout << "creating object v1, object cache size = TODO" << endl;
-
-		uint64_t msg_count = spec::total_number_of_header_message::get(memory_addr);
-		cout << "parsing "<< msg_count <<" messages" << endl;
-		cout << "object header size = " << spec::header_size::get(memory_addr) << endl;
-
-		uint8_t * msg = first_message();
-
-		while(msg_count > 0ul) {
-			msg = parse_message(msg);
-			--msg_count;
-		}
+		foreach_messages([this](uint8_t * m) { this->parse_message(m); });
 
 	}
 
@@ -1338,7 +1328,7 @@ struct object_v1 : public object {
 		group_btree_v1_root = spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg);
 	}
 
-	uint8_t * parse_message(uint8_t * current_message) {
+	void parse_message(uint8_t * current_message) {
 		uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
 		uint16_t message_size   = spec_defs::message_header_v1_spec::size_of_message::get(current_message);
 		uint8_t message_flags   = spec_defs::message_header_v1_spec::flags::get(current_message);
@@ -1370,12 +1360,42 @@ struct object_v1 : public object {
 			parse_symbole_table(current_message+spec_defs::message_header_v1_spec::size);
 			break;
 		}
+	}
 
-		// next message
-		return current_message
-				+ spec_defs::message_header_v1_spec::size
-				+ spec_defs::message_header_v1_spec::size_of_message::get(current_message);
+	template<typename F>
+	void foreach_messages(F func) const {
 
+		uint64_t msg_count = spec::total_number_of_header_message::get(memory_addr);
+		cout << "parsing "<< msg_count <<" messages" << endl;
+		cout << "object header size = " << spec::header_size::get(memory_addr) << endl;
+
+		list<pair<offset_type, offset_type>> message_block_queue;
+		message_block_queue.push_back(pair<offset_type, length_type>{
+			first_message(),
+			file->to_offset(memory_addr)+spec::size+spec::header_size::get(memory_addr)}
+		);
+
+		while(!message_block_queue.empty()) {
+			uint8_t * msg = file->to_address(message_block_queue.front().first);
+			uint8_t * end = file->to_address(message_block_queue.front().second);
+			while(msg < end and msg_count > 0ul) {
+				uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(msg);
+				if (message_type == 0x0010) {
+					uint64_t offset = spec_defs::message_object_header_continuation_spec::offset::get(msg+spec_defs::message_header_v1_spec::size);
+					uint64_t length = spec_defs::message_object_header_continuation_spec::length::get(msg+spec_defs::message_header_v1_spec::size);
+					message_block_queue.push_back(pair<offset_type, offset_type>{offset, offset+length});
+				} else {
+					func(msg);
+				}
+				msg += spec_defs::message_header_v1_spec::size
+					+  spec_defs::message_header_v1_spec::size_of_message::get(msg);
+				--msg_count;
+			}
+			message_block_queue.pop_front();
+		}
+
+		if (msg_count != 0)
+			throw EXCEPTION("Message count is invalid (%d)", msg_count);
 	}
 
 	virtual auto get_id() const -> uint64_t override {
@@ -1561,13 +1581,12 @@ struct object_v1 : public object {
 
 	}
 
+
+
 	virtual auto list_attributes() const -> vector<char const *> override {
 		vector<char const *> ret;
 
-		uint64_t msg_count = spec::total_number_of_header_message::get(memory_addr);
-		uint8_t * current_message = first_message();
-
-		while(msg_count > 0ul) {
+		foreach_messages([&ret] (uint8_t * current_message) {
 			uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
 			uint16_t message_size   = spec_defs::message_header_v1_spec::size_of_message::get(current_message);
 			uint8_t message_flags   = spec_defs::message_header_v1_spec::flags::get(current_message);
@@ -1585,15 +1604,8 @@ struct object_v1 : public object {
 				} else {
 					throw EXCEPTION("Not implemented");
 				}
-
 			}
-
-			// next message
-			current_message = current_message
-					+ spec_defs::message_header_v1_spec::size
-					+ spec_defs::message_header_v1_spec::size_of_message::get(current_message);
-			--msg_count;
-		}
+		});
 
 		return ret;
 	}
@@ -1882,10 +1894,10 @@ struct file_impl : public h5ng::file_impl {
 		} else if (version == 'O') {
 			uint32_t sign = *reinterpret_cast<uint32_t*>(&data[offset]);
 			if (sign != 0x5244484ful)
-				throw runtime_error("TODO " STR(__LINE__));
+				throw EXCEPTION("Unexpected signature (0x%08x)", sign);
 			version = data[offset+OFFSET_V2_OBJECT_HEADER_VERSION];
 			if (version != 2)
-				throw runtime_error("TODO " STR(__LINE__));
+				throw EXCEPTION("Not implemented object version %d", version);
 			cout << "creating object at " << std::hex << offset << endl;
 			return (object_cache[offset] = make_shared<object_v2>(this, &data[offset]));
 		}

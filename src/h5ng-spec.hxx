@@ -380,6 +380,14 @@ struct message_attribute_v1_spec : public type_spec {
 	enum : uint64_t { size = last<dataspace_size>::size };
 };
 
+// Layout: Object Header Continuation Message #0x0010
+struct message_object_header_continuation_spec : public type_spec {
+	using offset        = spec<offset_type,  none>;
+	using length       = spec<length_type, offset>;
+	// optional fields
+	enum : uint64_t { size = last<length>::size };
+};
+
 // Layout: Version 2 B-tree, Type 1 Record Layout - Indirectly Accessed, Non-filtered, ‘Huge’ Fractal Heap Objects
 struct btree_v2_record_type1 : public type_spec {
 	using address              = spec<offset_type,   none>;
