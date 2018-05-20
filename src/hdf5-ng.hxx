@@ -1073,6 +1073,14 @@ struct object_v1 : public object {
 
 	uint64_t size_of_continuous_data;
 
+
+	// Attributes info
+	bool has_attribute_btree;
+	uint64_t maximum_creation_index;
+	uint64_t fractal_heap_address;
+	uint64_t attribute_name_btree_address;
+	uint64_t attribute_creation_order_btree_address;
+
 	uint64_t first_message() const {
 		uint64_t first_message_offset = file->to_offset(&memory_addr[spec::size]);
 		// message in v1 are aligned, compute alignment to 8-bytes boundary
@@ -1096,6 +1104,24 @@ struct object_v1 : public object {
 	}
 
 	virtual ~object_v1() { }
+
+	void parse_attribute_info(uint8_t * msg) {
+		has_attribute_btree = true;
+
+		uint8_t flags = spec_defs::message_attribute_info_spec::flags::get(msg);
+
+		if (flags&0x01u) {
+			maximum_creation_index = read_at<uint16_t>(msg+spec_defs::message_attribute_info_spec::size);
+		}
+
+		fractal_heap_address = read_at<offset_type>(msg+spec_defs::message_attribute_info_spec::size+((flags&0x01u)?2:0));
+		attribute_name_btree_address = read_at<offset_type>(msg+spec_defs::message_attribute_info_spec::size+((flags&0x01u)?2:0)+SIZE_OF_OFFSET);
+
+		if (flags&0x02u) {
+			attribute_creation_order_btree_address = read_at<offset_type>(msg+spec_defs::message_attribute_info_spec::size+((flags&0x01u)?2:0)+SIZE_OF_OFFSET+SIZE_OF_OFFSET);
+		}
+
+	}
 
 	void parse_dataspace(uint8_t * msg) {
 		cout << "parse_dataspace " << std::dec <<
@@ -1358,6 +1384,9 @@ struct object_v1 : public object {
 			break;
 		case 0x0011:
 			parse_symbole_table(current_message+spec_defs::message_header_v1_spec::size);
+			break;
+		case 0x0015:
+			parse_attribute_info(current_message+spec_defs::message_header_v1_spec::size);
 			break;
 		}
 	}
