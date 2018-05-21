@@ -253,6 +253,7 @@ struct b_tree_v2_node_spec : public type_spec {
 	using type                          = spec<uint8_t,      version>;
 
 	// variable size;
+	enum : uint64_t { size = last<type>::size };
 } __attribute__((packed));
 
 struct object_header_v1_spec : public type_spec {
@@ -392,7 +393,7 @@ struct message_attribute_info_spec : public type_spec {
 // Layout: Attribute Message (Version 1) #0x000C
 struct message_attribute_v1_spec : public type_spec {
 	using version             = spec<uint8_t,  none>;
-	using reserved            = spec<uint8_t, version>;
+	using reserved            = spec<uint8_t,  version>;
 	using name_size           = spec<uint16_t, reserved>;
 	using datatype_size       = spec<uint16_t, name_size>;
 	using dataspace_size      = spec<uint16_t, datatype_size>;
@@ -485,12 +486,14 @@ struct btree_v2_record_type7_sub_type1 {
 
 
 // Layout: Version 2 B-tree, Type 8 Record Layout - Attribute Name for Indexed Attributes
-struct btree_v2_record_type8 {
-	uint64_t heap_id;
-	uint8_t message_flags;
-	uint32_t creation_order;
-	uint32_t hash_name;
-} __attribute__((packed));
+struct btree_v2_record_type8 : public type_spec {
+	using heap_id              = spec<uint64_t,   none>;
+	using message_flags        = spec<uint8_t,    heap_id>;
+	using creation_order       = spec<uint32_t,   message_flags>;
+	using hash_name            = spec<uint32_t,   creation_order>;
+
+	enum : uint64_t { size = last<hash_name>::size };
+};
 
 
 // Layout: Version 2 B-tree, Type 9 Record Layout - Creation Order for Indexed Attributes

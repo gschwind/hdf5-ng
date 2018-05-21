@@ -786,6 +786,218 @@ struct superblock_v3 : public superblock {
 
 };
 
+struct b_tree_xxx_t {
+	uint64_t maximum_child_node;
+	uint64_t total_maximum_child_node;
+	uint64_t maximum_child_node_size;
+	uint64_t total_maximum_child_node_size;
+	uint64_t (*read_maximum_child_node)(uint8_t *);
+	uint64_t (*read_total_maximum_child_node)(uint8_t *);
+};
+
+template<typename NODE_TYPE>
+struct btree_v2_node : public file_object {
+	using spec = typename spec_defs::b_tree_v2_node_spec;
+
+	b_tree_xxx_t const & layout;
+	uint64_t child_node_count;
+
+	btree_v2_node(file_impl * file, uint8_t * addr, b_tree_xxx_t const & layout, uint64_t child_node_count) :
+		file_object{file, addr}, layout{layout}, child_node_count{child_node_count} { }
+	btree_v2_node(btree_v2_node const &) = default;
+	btree_v2_node & operator=(btree_v2_node const & x) = default;
+
+	uint32_t signature() const
+	{
+		return spec::signature::get(memory_addr);
+	}
+
+	uint8_t version() const
+	{
+		return spec::version::get(memory_addr);
+	}
+
+	uint8_t type() const
+	{
+		return spec::type::get(memory_addr);
+	}
+
+	uint8_t * get_record(int n) const
+	{
+		return memory_addr + spec::size + (n*NODE_TYPE::size);
+	}
+
+	uint8_t * get_subnode(int n) const {
+		return memory_addr + spec::size + (layout.maximum_child_node*NODE_TYPE::size) + (n*(SIZE_OF_OFFSET+layout.maximum_child_node_size+layout.total_maximum_child_node_size));
+	}
+
+	uint64_t get_subnode_offset(int n) const {
+		return read_at<offset_type>(get_subnode(n));
+	}
+
+	uint64_t get_subnode_child_count(int n) const {
+		return layout.read_maximum_child_node(get_subnode(n)+SIZE_OF_OFFSET);
+	}
+
+	uint64_t get_subnode_total_child_count(int n) const {
+		return layout.read_total_maximum_child_node(get_subnode(n)+SIZE_OF_OFFSET+layout.maximum_child_node_size);
+	}
+
+
+};
+
+template<typename NOTE_TYPE>
+struct btree_v2_header : public file_object {
+	using spec = typename spec_defs::b_tree_v2_hdr_spec;
+	btree_v2_header(file_impl * file, uint8_t * addr) : file_object{file, addr} { }
+	btree_v2_header(btree_v2_header const &) = default;
+	btree_v2_header & operator=(btree_v2_header const & x) = default;
+
+	uint8_t * signature() const
+	{
+		return spec::signature::get(memory_addr);
+	}
+
+	uint8_t version() const
+	{
+		return spec::version::get(memory_addr);
+	}
+
+	uint8_t type() const
+	{
+		return spec::type::get(memory_addr);
+	}
+
+	uint32_t node_size() const
+	{
+		return spec::node_size::get(memory_addr);
+	}
+
+	uint16_t record_size() const
+	{
+		return spec::record_size::get(memory_addr);
+	}
+
+	uint16_t depth() const
+	{
+		return spec::depth::get(memory_addr);
+	}
+
+	uint8_t split_percent() const
+	{
+		return spec::split_percent::get(memory_addr);
+	}
+
+	uint8_t merge_percent() const
+	{
+		return spec::merge_percent::get(memory_addr);
+	}
+
+	uint64_t root_node_address() const
+	{
+		return spec::root_node_address::get(memory_addr);
+	}
+
+	uint16_t number_of_record_in_root_node() const
+	{
+		return spec::number_of_records_in_root_node::get(memory_addr);
+	}
+
+	uint64_t total_number_of_records_in_b_tree() const
+	{
+		return spec::total_number_of_record_in_b_tree::get(memory_addr);
+	}
+
+	uint32_t checksum() const
+	{
+		return spec::checksum::get(memory_addr);
+	}
+
+	void maximum_stored_records(uint64_t depth, uint64_t & maximum_child_node, uint64_t & total_maximum_child_node) {
+		if (depth == 0) {
+			maximum_child_node = 0;
+			total_maximum_child_node = 0;
+		} else if (depth == 1) {
+			maximum_child_node = (node_size() - 10) / record_size();
+			total_maximum_child_node = maximum_child_node;
+		} else {
+			uint64_t maximum_child_node_count_0;
+			uint64_t total_maximum_child_node_count_0;
+
+			maximum_stored_records(depth-1, maximum_child_node_count_0, total_maximum_child_node_count_0);
+
+			uint64_t n0 = get_minimum_storage_size_for(maximum_child_node_count_0);
+			uint64_t n1 = get_minimum_storage_size_for(total_maximum_child_node_count_0);
+			maximum_child_node = (node_size() - 10 - n1 - n0 - SIZE_OF_OFFSET) / (record_size() + n1 + n0 + SIZE_OF_OFFSET);
+			total_maximum_child_node = total_maximum_child_node_count_0*maximum_child_node;
+
+		}
+	}
+
+	auto list_records() const -> vector<uint8_t *>
+	{
+		cout << "ZZZ=" << signature()[0] << signature()[1] << signature()[2] << signature()[3] << endl;
+		cout << "ZZZ=" <<  total_number_of_records_in_b_tree() << endl;
+
+		// pre-compute some b_tree data
+		vector<b_tree_xxx_t> xxx{depth()};
+		for(int d = 0; d < depth(); ++d) {
+			if (d == 0) {
+				xxx[d].maximum_child_node = 0;
+				xxx[d].total_maximum_child_node = 0;
+				xxx[d].maximum_child_node_size = 0;
+				xxx[d].total_maximum_child_node_size = 0;
+				xxx[d].read_maximum_child_node = 0;
+				xxx[d].read_total_maximum_child_node = 0;
+			} else {
+				xxx[d].maximum_child_node_size = get_minimum_storage_size_for(xxx[d-1].maximum_child_node);
+				xxx[d].total_maximum_child_node_size = get_minimum_storage_size_for(xxx[d-1].total_maximum_child_node);
+				xxx[d].maximum_child_node = (node_size() - 10 - xxx[d].total_maximum_child_node_size - xxx[d].maximum_child_node_size - SIZE_OF_OFFSET) / (record_size() + xxx[d].total_maximum_child_node_size + xxx[d].maximum_child_node_size + SIZE_OF_OFFSET);
+				xxx[d].total_maximum_child_node = xxx[d-1].total_maximum_child_node*xxx[d].maximum_child_node;
+				xxx[d].read_maximum_child_node = get_reader_for(xxx[d].maximum_child_node_size);
+				xxx[d].read_total_maximum_child_node = get_reader_for(xxx[d].total_maximum_child_node_size);
+			}
+		}
+
+
+		vector<uint8_t *> ret{total_number_of_records_in_b_tree()};
+		stack<pair<uint64_t, btree_v2_node<NOTE_TYPE>>> s;
+
+		s.emplace(0, btree_v2_node<NOTE_TYPE>{file, file->to_address(root_node_address()), xxx[depth()-1], number_of_record_in_root_node()});
+
+		uint64_t cur = 0;
+		while(not s.empty()) {
+			auto & iter = s.top().first;
+			auto const & node = s.top().second;
+
+			uint64_t d = depth() - s.size();
+
+			if (iter < node.child_node_count) {
+				if (d != 0) {
+					uint8_t * next = file->to_address(node.get_subnode_offset(iter));
+					s.emplace(0, btree_v2_node<NOTE_TYPE>{file, next, xxx[d], node.get_subnode_child_count(iter)});
+					++(iter);
+				} else {
+					ret[cur++] = node.get_record(iter);
+					++(iter);
+				}
+			} else {
+				s.pop();
+				if (s.top().first < s.top().second.child_node_count-1) {
+					ret[cur++] = s.top().second.get_record(s.top().first);
+				}
+			}
+		}
+
+		return ret;
+
+	}
+
+
+};
+
+
+
 struct group_btree_v1 : public file_object {
 	using spec = typename spec_defs::b_tree_v1_hdr_spec;
 
@@ -1022,7 +1234,7 @@ struct group_btree_v2 : public file_object {
 
 			uint64_t n0 = get_minimum_storage_size_for(maximum_child_node_count_0);
 			uint64_t n1 = get_minimum_storage_size_for(total_maximum_child_node_count_0);
-			maximum_child_node = (node_size() - 10 - n1 - n0) / (record_size() + n1 + n0);
+			maximum_child_node = (node_size() - 10 - n1 - n0 - SIZE_OF_OFFSET) / (record_size() + n1 + n0 + SIZE_OF_OFFSET);
 			total_maximum_child_node = total_maximum_child_node_count_0*maximum_child_node;
 
 		}
@@ -1097,6 +1309,8 @@ struct object_v1 : public object {
 		layout_class = -1;
 		dimensionality = 0;
 		size_of_continuous_data = 0;
+
+		has_attribute_btree = false;
 
 		cout << "creating object v1, object cache size = TODO" << endl;
 		foreach_messages([this](uint8_t * m) { this->parse_message(m); });
@@ -1635,6 +1849,17 @@ struct object_v1 : public object {
 				}
 			}
 		});
+
+
+		if (has_attribute_btree) {
+			auto btree = btree_v2_header<typename spec_defs::btree_v2_record_type8>(file, file->to_address(attribute_name_btree_address));
+			auto xx = btree.list_records();
+			cout << "XXXXX" << endl;
+			for(auto i: xx) {
+				cout << (void*)i << endl;
+			}
+			cout << "TTTTT" << endl;
+		}
 
 		return ret;
 	}
