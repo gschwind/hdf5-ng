@@ -79,6 +79,9 @@ struct _h5obj {
 	virtual auto shape(int i) const -> size_t = 0;
 	virtual auto keys() const -> vector<char const *> = 0;
 	virtual auto list_attributes() const -> vector<char const *> = 0;
+
+	virtual auto modification_time() const -> uint32_t = 0;
+
 	virtual void print_info() const = 0;
 
 };
@@ -127,6 +130,11 @@ public:
 
 	void print_info() const {
 		_ptr->print_info();
+	}
+
+	auto modification_time() const -> uint32_t
+	{
+		return _ptr->modification_time();
 	}
 
 	template<typename ... ARGS>

@@ -57,6 +57,33 @@ static uint64_t const OFFSET_V3_SIZE_OF_LENGTH = 10;
 static uint64_t const OFFSET_V1_OBJECT_HEADER_VERSION = 0;
 static uint64_t const OFFSET_V2_OBJECT_HEADER_VERSION = 4;
 
+enum message_typeid_e : uint64_t {
+	MSG_NIL                                = 0x0000u,
+	MSG_DATASPACE                          = 0x0001u,
+	MSG_LINK_INFO                          = 0x0002u,
+	MSG_DATATYPE                           = 0x0003u,
+	MSG_FILL_VALUE_OLD                     = 0x0004u,
+	MSG_FILL_VALUE                         = 0x0005u,
+	MSG_LINK                               = 0x0006u,
+	MSG_DATA_STORAGE                       = 0x0007u,
+	MSG_DATA_LAYOUT                        = 0x0008u,
+	MSG_BOGUS                              = 0x0009u,
+	MSG_GROUP_INFO                         = 0x000Au,
+	MSG_DATA_STORAGE_FILTER_PIPELINE       = 0x000Bu,
+	MSG_ATTRIBUTE                          = 0x000Cu,
+	MSG_OBJECT_COMMENT                     = 0x000Du,
+	MSG_OBJECT_MODIFICATION_TIME_OLD       = 0x000Eu,
+	MSG_SHARED_MESSAGE_TABLE               = 0x000Fu,
+	MSG_OBJECT_HEADER_CONTINUATION         = 0x0010u,
+	MSG_SYMBOL_TABLE                       = 0x0011u,
+	MSG_OBJECT_MODIFICATION_TIME           = 0x0012u,
+	MSG_BTREE_K_VALUE                      = 0x0013u,
+	MSG_DRIVER_INFO                        = 0x0014u,
+	MSG_ATTRIBUTE_INFO                     = 0x0015u,
+	MSG_OBJECT_REFERENCE_COUNT             = 0x0016u
+};
+
+
 struct _named_tuple_0 {
 	uint64_t offset_of_size_offset;
 	uint64_t offset_of_size_length;
@@ -221,6 +248,11 @@ struct object : public file_object, public _h5obj {
 	}
 
 	virtual void print_info() const override {
+		throw EXCEPTION("Not implemented");
+	}
+
+	virtual auto modification_time() const -> uint32_t override
+	{
 		throw EXCEPTION("Not implemented");
 	}
 
@@ -1572,10 +1604,6 @@ struct object_v1 : public object {
 		uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
 		uint16_t message_size   = spec_defs::message_header_v1_spec::size_of_message::get(current_message);
 		uint8_t message_flags   = spec_defs::message_header_v1_spec::flags::get(current_message);
-		cout << "found mesage <@" << static_cast<void*>(current_message)
-				<< " type = 0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(message_type) << std::hex
-				<< " size=" << message_size
-				<< " flags=" << std::hex << static_cast<int>(message_flags) << ">" << endl;
 
 		switch(message_type) {
 		case 0x0001:
@@ -1593,6 +1621,9 @@ struct object_v1 : public object {
 		case 0x0008:
 			parse_datalayout(current_message+spec_defs::message_header_v1_spec::size);
 			break;
+		case 0x000C:
+			// ignore attribute message
+			break;
 		case 0x0012:
 			parse_object_modifcation_time(current_message+spec_defs::message_header_v1_spec::size);
 			break;
@@ -1601,6 +1632,12 @@ struct object_v1 : public object {
 			break;
 		case 0x0015:
 			parse_attribute_info(current_message+spec_defs::message_header_v1_spec::size);
+			break;
+		default:
+			cout << "found message <@" << static_cast<void*>(current_message)
+					<< " type = 0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(message_type) << std::hex
+					<< " size=" << message_size
+					<< " flags=" << std::hex << static_cast<int>(message_flags) << ">" << endl;
 			break;
 		}
 	}
@@ -1833,10 +1870,6 @@ struct object_v1 : public object {
 			uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
 			uint16_t message_size   = spec_defs::message_header_v1_spec::size_of_message::get(current_message);
 			uint8_t message_flags   = spec_defs::message_header_v1_spec::flags::get(current_message);
-			cout << "found mesage <@" << static_cast<void*>(current_message)
-					<< " type = 0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(message_type) << std::hex
-					<< " size=" << message_size
-					<< " flags=" << std::hex << static_cast<int>(message_flags) << ">" << endl;
 
 			if (message_type == 0x000C) {
 				uint8_t * message_body = current_message+spec_defs::message_header_v1_spec::size;
@@ -1935,6 +1968,23 @@ struct object_v1 : public object {
 
 	}
 
+	virtual auto modification_time() const -> uint32_t override
+	{
+		uint32_t modification_time = numeric_limits<uint32_t>::max();
+		foreach_messages([&modification_time] (uint8_t * current_message) {
+			uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
+			uint16_t message_size   = spec_defs::message_header_v1_spec::size_of_message::get(current_message);
+			uint8_t message_flags   = spec_defs::message_header_v1_spec::flags::get(current_message);
+			if (message_type == MSG_OBJECT_MODIFICATION_TIME) {
+				uint8_t * message_body = current_message+spec_defs::message_header_v1_spec::size;
+				uint8_t version = spec_defs::message_object_modification_time_spec::version::get(message_body);
+				if (version != 1)
+					throw EXCEPTION("unknown modification time version (%d)", version);
+				modification_time = spec_defs::message_object_modification_time_spec::time::get(message_body);
+			}
+		});
+		return modification_time;
+	}
 
 };
 
@@ -2401,6 +2451,10 @@ struct _h5file : public _h5obj {
 	virtual void print_info() const override
 	{
 		_file_impl->get_superblock()->get_root_object()->print_info();
+	}
+
+	virtual auto modification_time() const -> uint32_t override {
+		throw EXCEPTION("Not implemented");
 	}
 
 };
