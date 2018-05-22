@@ -414,6 +414,76 @@ struct message_object_header_continuation_spec : public type_spec {
 	enum : uint64_t { size = last<length>::size };
 };
 
+// Fixed-Point Numbers
+struct datatype_property_class0_spec : public type_spec {
+	using bit_offset          = spec<uint16_t,  none>;
+	using bit_precision       = spec<uint16_t, bit_offset>;
+	enum : uint64_t { size = last<bit_precision>::size };
+};
+
+// Floating-Point Numbers
+struct datatype_property_class1_spec : public type_spec {
+	using bit_offset              = spec<uint16_t,  none>;
+	using bit_precision           = spec<uint16_t, bit_offset>;
+	using exponant_location       = spec<uint8_t, bit_precision>;
+	using exponant_size           = spec<uint8_t, exponant_location>;
+	using mantissa_location       = spec<uint8_t, exponant_size>;
+	using mantissa_size           = spec<uint8_t, mantissa_location>;
+	using exponant_bias           = spec<uint32_t, mantissa_size>;
+	enum : uint64_t { size = last<exponant_bias>::size };
+};
+
+// Time
+struct datatype_property_class2_spec : public type_spec {
+	using bit_precision           = spec<uint16_t, none>;
+	enum : uint64_t { size = last<bit_precision>::size };
+};
+
+// String
+struct datatype_property_class3_spec : public type_spec {
+	// empty properties
+	enum : uint64_t { size = 0 };
+};
+
+// Bitfields
+struct datatype_property_class4_spec : public type_spec {
+	using bit_offset          = spec<uint16_t,  none>;
+	using bit_precision       = spec<uint16_t, bit_offset>;
+	enum : uint64_t { size = last<bit_precision>::size };
+};
+
+// Opaque
+struct datatype_property_class5_spec : public type_spec {
+	// variable size, padded to 8 bytes
+};
+
+// Compound type
+struct datatype_property_class6_spec : public type_spec {
+	// TODO
+};
+
+// Reference
+struct datatype_property_class7_spec : public type_spec {
+	// empty properties
+	enum : uint64_t { size = 0 };
+};
+
+// Enumeration
+struct datatype_property_class8_spec : public type_spec {
+	// TODO
+};
+
+// Variable-Length
+struct datatype_property_class9_spec : public type_spec {
+	// TODO
+};
+
+// Array
+struct datatype_property_class10_spec : public type_spec {
+	// TODO
+};
+
+
 // Layout: Version 2 B-tree, Type 1 Record Layout - Indirectly Accessed, Non-filtered, ‘Huge’ Fractal Heap Objects
 struct btree_v2_record_type1 : public type_spec {
 	using address              = spec<offset_type,   none>;
