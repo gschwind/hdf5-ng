@@ -29,6 +29,7 @@
 #include <type_traits>
 #include <limits>
 #include <iomanip>
+#include <algorithm>
 
 #include "h5ng-spec.hxx"
 #include "h5ng.hxx"
@@ -261,7 +262,7 @@ struct object : public file_object, public _h5obj {
 		throw EXCEPTION("Not implemented");
 	}
 
-	virtual uint64_t element_size() const {
+	virtual auto element_size() const -> uint64_t {
 		throw EXCEPTION("Not implemented");
 	}
 
@@ -1033,68 +1034,63 @@ struct btree_v2_header : public file_object {
 
 };
 
-
-
-struct group_btree_v1 : public file_object {
+struct btree_v1 : public file_object {
 	using spec = typename spec_defs::b_tree_v1_hdr_spec;
+	uint64_t key_length;
 
-	group_btree_v1(file_impl * file, uint8_t * addr) : file_object{file, addr} { }
+	btree_v1(file_impl * file, uint8_t * addr, uint64_t key_length) : file_object{file, addr}, key_length{key_length} { }
 
-	group_btree_v1(group_btree_v1 const &) = default;
+	btree_v1(btree_v1 const &) = default;
 
-	group_btree_v1 & operator=(group_btree_v1 const & x) = default;
+	btree_v1 & operator=(btree_v1 const & x) = default;
 
 	/* K+1 keys */
-	length_type get_key(int i) const {
-		return *reinterpret_cast<length_type*>(&memory_addr[spec::size+i*(SIZE_OF_OFFSET+SIZE_OF_LENGTH)]);
+	uint8_t * get_key(int i) const
+	{
+		return &memory_addr[spec::size+i*(SIZE_OF_OFFSET+key_length)];
 	}
 
 	/* K key */
-	offset_type get_node(int i) const {
-		return *reinterpret_cast<offset_type*>(&memory_addr[spec::size+i*(SIZE_OF_OFFSET+SIZE_OF_LENGTH)+SIZE_OF_LENGTH]);
+	offset_type get_node(int i) const
+	{
+		return *reinterpret_cast<offset_type*>(&memory_addr[spec::size+i*(SIZE_OF_OFFSET+key_length)+key_length]);
 	}
 
-	uint64_t get_depth() const {
+	uint64_t get_depth() const
+	{
 		return spec::node_level::get(memory_addr);
 	}
 
-	uint64_t get_entries_count() const {
+	uint64_t get_entries_count() const
+	{
 		return spec::entries_used::get(memory_addr);
 	}
 
 };
 
-struct chunk_btree_v1 : public file_object {
-	using spec = typename spec_defs::b_tree_v1_hdr_spec;
 
-	uint64_t key_length;
+struct group_btree_v1 : public btree_v1 {
 
-	chunk_btree_v1(file_impl * file, uint8_t * addr, uint64_t dimensionality) : file_object{file, addr}, key_length{8+8*(dimensionality)} { }
+	group_btree_v1(file_impl * file, uint8_t * addr) : btree_v1{file, addr, SIZE_OF_LENGTH} { }
+	group_btree_v1(group_btree_v1 const &) = default;
+	group_btree_v1 & operator=(group_btree_v1 const &) = default;
 
+	length_type get_key(int i) const
+	{
+		return *reinterpret_cast<length_type*>(btree_v1::get_key(i));
+	}
+
+};
+
+struct chunk_btree_v1 : public btree_v1 {
+
+	chunk_btree_v1(file_impl * file, uint8_t * addr, uint64_t dimensionality) : btree_v1{file, addr, 8+8*(dimensionality)} { }
 	chunk_btree_v1(chunk_btree_v1 const &) = default;
+	chunk_btree_v1 & operator=(chunk_btree_v1 const &) = default;
 
-	chunk_btree_v1 & operator=(chunk_btree_v1 const & x) = default;
-
-	/* K+1 keys */
-	uint8_t * get_key(int i) const {
-		return &memory_addr[spec::size+i*(SIZE_OF_OFFSET+key_length)];
-	}
-
-	/* K key */
-	offset_type get_node(int i) const {
-		return *reinterpret_cast<offset_type*>(&memory_addr[spec::size+i*(SIZE_OF_OFFSET+key_length)+key_length]);
-	}
-
-	uint64_t get_depth() const {
-		return spec::node_level::get(memory_addr);
-	}
-
-	uint64_t get_entries_count() const {
-		return spec::entries_used::get(memory_addr);
-	}
-
-	length_type * get_offset(int i) const {
-		return reinterpret_cast<length_type*>(get_key(i)+spec_defs::b_tree_v1_chunk_key_spec::size);
+	length_type * get_offset(int i) const
+	{
+		return reinterpret_cast<length_type*>(btree_v1::get_key(i)+spec_defs::b_tree_v1_chunk_key_spec::size);
 	}
 
 };
@@ -1119,7 +1115,6 @@ struct group_symbol_table_entry {
 	uint8_t * scratch_pad() {
 		return &spec::scratch_pad_space::get(reinterpret_cast<uint8_t*>(this));
 	}
-
 
 };
 
@@ -1285,6 +1280,38 @@ struct group_btree_v2 : public file_object {
 //			return x->second;
 //		return (_node_tree_cache[offset] = make_shared<node_type>(this, &base_addr()+offset, record_count, depth)).get();
 //	}
+
+};
+
+
+struct message_v1 {
+	uint8_t * addr;
+
+	using spec = typename spec_defs::message_header_v1_spec;
+
+	message_v1(uint8_t * addr) : addr{addr} { }
+	message_v1(message_v1 const &) = default;
+	message_v1 & operator=(message_v1 const &) = default;
+
+	uint16_t type() const
+	{
+		return spec::type::get(addr);
+	}
+
+	uint8_t flags() const
+	{
+		return spec::flags::get(addr);
+	}
+
+	uint16_t size() const
+	{
+		return spec::size_of_message::get(addr);
+	}
+
+	uint8_t * data() const
+	{
+		return addr+spec::size;
+	}
 
 };
 
@@ -1596,7 +1623,7 @@ struct object_v1 : public object {
 		// TODO
 	}
 
-	void parse_symbole_table(uint8_t * msg) {
+	void parse_symbol_table(uint8_t * msg) {
 		cout << "parse_symbol_table " << std::dec
 				<< spec_defs::message_symbole_table_spec::local_heap_address::get(msg) << " "
 				<< spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg)
@@ -1633,7 +1660,7 @@ struct object_v1 : public object {
 			parse_object_modifcation_time(current_message+spec_defs::message_header_v1_spec::size);
 			break;
 		case 0x0011:
-			parse_symbole_table(current_message+spec_defs::message_header_v1_spec::size);
+			parse_symbol_table(current_message+spec_defs::message_header_v1_spec::size);
 			break;
 		case 0x0015:
 			parse_attribute_info(current_message+spec_defs::message_header_v1_spec::size);
@@ -1647,6 +1674,99 @@ struct object_v1 : public object {
 		}
 	}
 
+	struct message_list {
+		file_impl *   _file;
+		uint64_t      _msg_count;
+		uint8_t *     _bgn;
+		uint8_t *     _end;
+
+		message_list(file_impl * file, uint64_t msg_count, uint8_t * bgn, uint8_t * end) :
+			_file{file}, _msg_count{msg_count}, _bgn{bgn}, _end{end} { }
+
+		struct iterator : public std::iterator<std::forward_iterator_tag, message_v1> {
+			file_impl * file;
+			uint64_t msg_count;
+			list<pair<uint8_t *, uint8_t *>> message_block_queue;
+
+			// end iterator
+			iterator() : file{nullptr}, msg_count{0ul} { }
+
+			// begin iterator
+			iterator(file_impl * file, uint64_t msg_count, uint8_t * bgn, uint8_t * end) :
+				file{file},
+				msg_count{msg_count}
+			{
+				message_block_queue.emplace_front(bgn, end);
+			}
+
+			message_v1 operator*() const
+			{
+				return message_v1{message_block_queue.front().first};
+			}
+
+			void _next_msg()
+			{
+				if (msg_count <= 0ul or message_block_queue.empty())
+					throw EXCEPTION("message iterator overflow");
+				message_block_queue.front().first += spec_defs::message_header_v1_spec::size
+					+  spec_defs::message_header_v1_spec::size_of_message::get(message_block_queue.front().first);
+				--msg_count;
+				while(not message_block_queue.empty()) {
+					if (message_block_queue.front().first >= message_block_queue.front().second) {
+						message_block_queue.pop_front();
+					} else {
+						break;
+					}
+				}
+			}
+
+			// iterate throw message, handling MSG_OBJECT_HEADER_CONTINUATION
+			iterator & operator++()
+			{
+				_next_msg();
+
+				// go to next message
+				while (not message_block_queue.empty()) {
+					uint8_t * msg = message_block_queue.front().first;
+					uint8_t message_type = spec_defs::message_header_v1_spec::type::get(msg);
+					if (message_type == MSG_OBJECT_HEADER_CONTINUATION) {
+						_next_msg();
+						// go to the sub list.
+						uint64_t offset = spec_defs::message_object_header_continuation_spec::offset::get(msg+spec_defs::message_header_v1_spec::size);
+						uint64_t length = spec_defs::message_object_header_continuation_spec::length::get(msg+spec_defs::message_header_v1_spec::size);
+						message_block_queue.emplace_front(file->to_address(offset), file->to_address(offset+length));
+					} else {
+						return *this;
+					}
+				}
+
+				return *this;
+
+			}
+
+			bool operator==(iterator const & x) const
+			{
+				return msg_count == x.msg_count;
+			}
+
+			bool operator!=(iterator const & x) const
+			{
+				return msg_count != x.msg_count;
+			}
+
+		};
+
+		iterator begin() const {
+			return iterator{_file, _msg_count, _bgn, _end};
+		}
+
+		iterator end() const {
+			return iterator{};
+		}
+
+	};
+
+
 	template<typename F>
 	void foreach_messages(F func) const {
 
@@ -1655,7 +1775,7 @@ struct object_v1 : public object {
 		cout << "object header size = " << spec::header_size::get(memory_addr) << endl;
 
 		list<pair<offset_type, offset_type>> message_block_queue;
-		message_block_queue.push_back(pair<offset_type, length_type>{
+		message_block_queue.push_back(pair<offset_type, offset_type>{
 			first_message(),
 			file->to_offset(memory_addr)+spec::size+spec::header_size::get(memory_addr)}
 		);
@@ -1734,7 +1854,8 @@ struct object_v1 : public object {
 		return reinterpret_cast<char *>(lheap->get_data(offset));
 	}
 
-	offset_type _group_find(char const * key) const {
+	offset_type _group_find(char const * key) const
+	{
 		auto group_symbol_table_offset = _group_find_key(key);
 		group_symbol_table table{file->to_address(group_symbol_table_offset)};
 		for(auto symbol_table_entry: table.get_symbole_entry_list()) {
@@ -1748,7 +1869,8 @@ struct object_v1 : public object {
 
 	}
 
-	size_t _find_sub_group(group_btree_v1 const & cur, char const * key) const {
+	size_t _find_sub_group(group_btree_v1 const & cur, char const * key) const
+	{
 		for(size_t i = 0; i < cur.get_entries_count(); ++i) {
 			char const * link_name = _get_link_name(cur.get_key(i+1));
 			if (std::strcmp(key, link_name) <= 0)
@@ -1866,18 +1988,21 @@ struct object_v1 : public object {
 
 	}
 
+	message_list messages() const
+	{
+		uint64_t msg_count = spec::total_number_of_header_message::get(memory_addr);
+		uint8_t * bgn = file->to_address(first_message());
+		uint8_t * end = memory_addr+spec::size+spec::header_size::get(memory_addr);
+		return message_list{file, msg_count, bgn, end};
+	}
 
 
 	virtual auto list_attributes() const -> vector<char const *> override {
 		vector<char const *> ret;
 
-		foreach_messages([&ret] (uint8_t * current_message) {
-			uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
-			uint16_t message_size   = spec_defs::message_header_v1_spec::size_of_message::get(current_message);
-			uint8_t message_flags   = spec_defs::message_header_v1_spec::flags::get(current_message);
-
-			if (message_type == 0x000C) {
-				uint8_t * message_body = current_message+spec_defs::message_header_v1_spec::size;
+		for (auto msg: messages()) {
+			if (msg.type() == MSG_ATTRIBUTE) {
+				uint8_t * message_body = msg.data();
 				auto version = spec_defs::message_attribute_v1_spec::version::get(message_body);
 
 				if(version == 1) {
@@ -1886,8 +2011,7 @@ struct object_v1 : public object {
 					throw EXCEPTION("Not implemented");
 				}
 			}
-		});
-
+		}
 
 		if (has_attribute_btree) {
 			auto btree = btree_v2_header<typename spec_defs::btree_v2_record_type8>(file, file->to_address(attribute_name_btree_address));
@@ -1975,20 +2099,17 @@ struct object_v1 : public object {
 
 	virtual auto modification_time() const -> uint32_t override
 	{
-		uint32_t modification_time = numeric_limits<uint32_t>::max();
-		foreach_messages([&modification_time] (uint8_t * current_message) {
-			uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
-			uint16_t message_size   = spec_defs::message_header_v1_spec::size_of_message::get(current_message);
-			uint8_t message_flags   = spec_defs::message_header_v1_spec::flags::get(current_message);
-			if (message_type == MSG_OBJECT_MODIFICATION_TIME) {
-				uint8_t * message_body = current_message+spec_defs::message_header_v1_spec::size;
-				uint8_t version = spec_defs::message_object_modification_time_spec::version::get(message_body);
-				if (version != 1)
-					throw EXCEPTION("unknown modification time version (%d)", version);
-				modification_time = spec_defs::message_object_modification_time_spec::time::get(message_body);
-			}
-		});
-		return modification_time;
+		auto l = messages();
+		auto msg = std::find_if(l.begin(), l.end(), [](message_v1 m) -> bool { return m.type() == MSG_OBJECT_MODIFICATION_TIME; });
+		if (msg == l.end()) {
+			return numeric_limits<uint32_t>::max();
+		} else {
+			uint8_t * message_body = (*msg).data();
+			uint8_t version = spec_defs::message_object_modification_time_spec::version::get(message_body);
+			if (version != 1)
+				throw EXCEPTION("unknown modification time version (%d)", version);
+			return spec_defs::message_object_modification_time_spec::time::get(message_body);
+		}
 	}
 
 	virtual auto comment() const -> char const * override
@@ -2379,6 +2500,7 @@ struct _h5file : public _h5obj {
 	uint8_t * data;
 	uint64_t file_size;
 	shared_ptr<file_impl> _file_impl;
+	shared_ptr<_h5obj> _root_object;
 
 	template<typename T>
 	T get(uint64_t offset) {
@@ -2432,7 +2554,7 @@ struct _h5file : public _h5obj {
 		 * 2, 4, 8, 16 or 32. our implementation is limited to 2, 4 and 8 bytes, uint64_t
 		 */
 		_file_impl = _for_each0<2,4,8>::create(data, version, superblock_offset, size_of_offset, size_of_length);
-
+		_root_object = _file_impl->get_superblock()->get_root_object();
 	}
 
 	virtual ~_h5file() = default;
@@ -2444,43 +2566,48 @@ struct _h5file : public _h5obj {
 
 	virtual auto operator[](string const & name) const -> h5obj override
 	{
-		return _file_impl->get_superblock()->get_root_object()->operator [](name);
+		return _root_object->operator [](name);
 	}
 
 	virtual auto shape() const -> vector<size_t> override
 	{
-		return _file_impl->get_superblock()->get_root_object()->shape();
+		return _root_object->shape();
 	}
 
 	virtual auto shape(int i) const -> size_t override
 	{
-		return _file_impl->get_superblock()->get_root_object()->shape(i);
+		return _root_object->shape(i);
 	}
 
 
 	virtual auto keys() const -> vector<char const *> override
 	{
-		return _file_impl->get_superblock()->get_root_object()->keys();
+		return _root_object->keys();
 	}
 
 	virtual auto list_attributes() const -> vector<char const *> override
 	{
-		return _file_impl->get_superblock()->get_root_object()->list_attributes();
+		return _root_object->list_attributes();
 	}
 
 	virtual void print_info() const override
 	{
-		_file_impl->get_superblock()->get_root_object()->print_info();
+		_root_object->print_info();
 	}
 
 	virtual auto modification_time() const -> uint32_t override
 	{
-		return _file_impl->get_superblock()->get_root_object()->modification_time();
+		return _root_object->modification_time();
 	}
 
 	virtual auto comment() const -> char const * override
 	{
-		return _file_impl->get_superblock()->get_root_object()->comment();
+		return _root_object->comment();
+	}
+
+	virtual auto element_size() const -> uint64_t override
+	{
+		return _root_object->element_size();
 	}
 
 };
