@@ -401,6 +401,11 @@ struct message_attribute_v1_spec : public type_spec {
 	enum : uint64_t { size = last<dataspace_size>::size };
 };
 
+// Layout: Object Comment Message  #0x000D
+struct message_comment_spec : public type_spec {
+	// variable size.
+};
+
 // Layout: Object Header Continuation Message #0x0010
 struct message_object_header_continuation_spec : public type_spec {
 	using offset        = spec<offset_type,  none>;

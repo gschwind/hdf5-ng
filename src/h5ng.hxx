@@ -81,6 +81,7 @@ struct _h5obj {
 	virtual auto list_attributes() const -> vector<char const *> = 0;
 
 	virtual auto modification_time() const -> uint32_t = 0;
+	virtual auto comment() const -> char const * = 0;
 
 	virtual void print_info() const = 0;
 
@@ -135,6 +136,11 @@ public:
 	auto modification_time() const -> uint32_t
 	{
 		return _ptr->modification_time();
+	}
+
+	auto comment() const -> char const *
+	{
+		return _ptr->comment();
 	}
 
 	template<typename ... ARGS>

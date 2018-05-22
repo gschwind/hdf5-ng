@@ -256,6 +256,11 @@ struct object : public file_object, public _h5obj {
 		throw EXCEPTION("Not implemented");
 	}
 
+	virtual auto comment() const -> char const * override
+	{
+		throw EXCEPTION("Not implemented");
+	}
+
 	virtual uint64_t element_size() const {
 		throw EXCEPTION("Not implemented");
 	}
@@ -1986,6 +1991,21 @@ struct object_v1 : public object {
 		return modification_time;
 	}
 
+	virtual auto comment() const -> char const * override
+	{
+		char const * comment = nullptr;
+		foreach_messages([&comment] (uint8_t * current_message) {
+			uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
+			uint16_t message_size   = spec_defs::message_header_v1_spec::size_of_message::get(current_message);
+			uint8_t message_flags   = spec_defs::message_header_v1_spec::flags::get(current_message);
+			if (message_type == MSG_OBJECT_COMMENT) {
+				uint8_t * message_body = current_message+spec_defs::message_header_v1_spec::size;
+				comment = reinterpret_cast<char *>(message_body);
+			}
+		});
+		return comment;
+	}
+
 };
 
 
@@ -2453,8 +2473,14 @@ struct _h5file : public _h5obj {
 		_file_impl->get_superblock()->get_root_object()->print_info();
 	}
 
-	virtual auto modification_time() const -> uint32_t override {
-		throw EXCEPTION("Not implemented");
+	virtual auto modification_time() const -> uint32_t override
+	{
+		return _file_impl->get_superblock()->get_root_object()->modification_time();
+	}
+
+	virtual auto comment() const -> char const * override
+	{
+		return _file_impl->get_superblock()->get_root_object()->comment();
 	}
 
 };
