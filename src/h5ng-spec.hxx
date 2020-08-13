@@ -68,8 +68,6 @@ struct type_spec {
 		static return_type & get(uint8_t * addr) {
 			return *reinterpret_cast<return_type*>(addr + offset);
 		}
-
-
 	};
 
 };
@@ -100,6 +98,7 @@ using offset_type = typename get_type_for_size<SIZE_OF_OFFSET>::type;
 using length_type = typename get_type_for_size<SIZE_OF_LENGTH>::type;
 
 struct group_symbol_table_spec : public type_spec {
+
 	using signature                    = spec<uint8_t[4], none>;
 	using version                      = spec<uint8_t, signature>;
 	using reserved_0                   = spec<uint8_t, version>;
@@ -285,8 +284,8 @@ struct object_header_v2_spec : public type_spec {
 
 struct message_header_v2_spec : public type_spec {
 	using type                       = spec<uint8_t,  none>;
-	using size_of_message_data       = spec<uint16_t, type>;
-	using flags                      = spec<uint8_t,  size_of_message_data>;
+	using size_of_message            = spec<uint16_t, type>;
+	using flags                      = spec<uint8_t,  size_of_message>;
 	// optional fields
 	enum : uint64_t { size = last<flags>::size };
 };

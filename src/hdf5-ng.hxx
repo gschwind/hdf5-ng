@@ -58,7 +58,7 @@ static uint64_t const OFFSET_V3_SIZE_OF_LENGTH = 10;
 static uint64_t const OFFSET_V1_OBJECT_HEADER_VERSION = 0;
 static uint64_t const OFFSET_V2_OBJECT_HEADER_VERSION = 4;
 
-enum message_typeid_e : uint64_t {
+enum message_typeid_e : uint16_t {
 	MSG_NIL                                = 0x0000u,
 	MSG_DATASPACE                          = 0x0001u,
 	MSG_LINK_INFO                          = 0x0002u,
@@ -568,6 +568,7 @@ struct file_impl {
 
 template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH>
 struct _impl {
+
 using spec_defs = typename h5ng::spec_defs<SIZE_OF_OFFSET, SIZE_OF_LENGTH>;
 
 using offset_type = typename get_type_for_size<SIZE_OF_OFFSET>::type;
@@ -1283,123 +1284,41 @@ struct group_btree_v2 : public file_object {
 
 };
 
-
-struct message_v1 {
-	uint8_t * addr;
-
-	using spec = typename spec_defs::message_header_v1_spec;
-
-	message_v1(uint8_t * addr) : addr{addr} { }
-	message_v1(message_v1 const &) = default;
-	message_v1 & operator=(message_v1 const &) = default;
-
-	uint16_t type() const
-	{
-		return spec::type::get(addr);
-	}
-
-	uint8_t flags() const
-	{
-		return spec::flags::get(addr);
-	}
-
-	uint16_t size() const
-	{
-		return spec::size_of_message::get(addr);
-	}
-
-	uint8_t * data() const
-	{
-		return addr+spec::size;
-	}
-
-};
-
-struct object_v1 : public object {
-	using spec = typename spec_defs::object_header_v1_spec;
-
-	bool has_group_btree;
-	bool has_data_set;
-
-	uint64_t K;
-	shared_ptr<local_heap> lheap;
-	offset_type group_btree_v1_root;
-	offset_type chunk_btree_v1_root;
-
-	uint8_t * rank;
-	length_type * _shape;
-	length_type * max_shape;
-	length_type * permutation; // Never implement in official lib.
-
-	uint32_t * size_of_elements;
-
-	uint8_t * fillvalue;
-
-	uint8_t layout_class;
-
-	//
-	offset_type data_address;
-
-	uint8_t * dimensionality;
-	uint32_t * _shape_of_chunk;
-	uint32_t * size_of_data_element_of_chunk;
-
-	// compact data optionnal elements
-	uint32_t compact_data_size;
-
-	uint64_t size_of_continuous_data;
-
-
+struct object_commom : public object
+{
 	// Attributes info
-	bool has_attribute_btree;
-	uint64_t maximum_creation_index;
-	uint64_t fractal_heap_address;
-	uint64_t attribute_name_btree_address;
-	uint64_t attribute_creation_order_btree_address;
-
-	uint64_t first_message() const {
-		uint64_t first_message_offset = file->to_offset(&memory_addr[spec::size]);
-		// message in v1 are aligned, compute alignment to 8-bytes boundary
-		first_message_offset -= 1ul;
-		first_message_offset &= ~0x0000000000000007ul;
-		first_message_offset += 0x0000000000000008ul;
-		return first_message_offset;
-	}
-
-	object_v1(file_impl * file, uint8_t * addr) : object{file, addr} {
-		group_btree_v1_root = undef_offset;
-		has_group_btree = false;
-		rank = 0;
-		layout_class = -1;
-		dimensionality = 0;
-		size_of_continuous_data = 0;
-
-		has_attribute_btree = false;
-
-		cout << "creating object v1, object cache size = TODO" << endl;
-		foreach_messages([this](uint8_t * m) { this->parse_message(m); });
-
-	}
-
-	virtual ~object_v1() { }
+	struct {
+		bool has_attribute_btree;
+		uint64_t maximum_creation_index;
+		uint64_t fractal_heap_address;
+		uint64_t attribute_name_btree_address;
+		uint64_t attribute_creation_order_btree_address;
+	} attribute_info;
 
 	void parse_attribute_info(uint8_t * msg) {
-		has_attribute_btree = true;
+		attribute_info.has_attribute_btree = true;
 
 		uint8_t flags = spec_defs::message_attribute_info_spec::flags::get(msg);
 
 		if (flags&0x01u) {
-			maximum_creation_index = read_at<uint16_t>(msg+spec_defs::message_attribute_info_spec::size);
+			attribute_info.maximum_creation_index = read_at<uint16_t>(msg+spec_defs::message_attribute_info_spec::size);
 		}
 
-		fractal_heap_address = read_at<offset_type>(msg+spec_defs::message_attribute_info_spec::size+((flags&0x01u)?2:0));
-		attribute_name_btree_address = read_at<offset_type>(msg+spec_defs::message_attribute_info_spec::size+((flags&0x01u)?2:0)+SIZE_OF_OFFSET);
+		attribute_info.fractal_heap_address = read_at<offset_type>(msg+spec_defs::message_attribute_info_spec::size+((flags&0x01u)?2:0));
+		attribute_info.attribute_name_btree_address = read_at<offset_type>(msg+spec_defs::message_attribute_info_spec::size+((flags&0x01u)?2:0)+SIZE_OF_OFFSET);
 
 		if (flags&0x02u) {
-			attribute_creation_order_btree_address = read_at<offset_type>(msg+spec_defs::message_attribute_info_spec::size+((flags&0x01u)?2:0)+SIZE_OF_OFFSET+SIZE_OF_OFFSET);
+			attribute_info.attribute_creation_order_btree_address = read_at<offset_type>(msg+spec_defs::message_attribute_info_spec::size+((flags&0x01u)?2:0)+SIZE_OF_OFFSET+SIZE_OF_OFFSET);
 		}
 
 	}
+
+	struct {
+		uint8_t * rank;
+		length_type * _shape;
+		length_type * max_shape;
+		length_type * permutation; // Never implement in official lib.
+	} dataspace;
 
 	void parse_dataspace(uint8_t * msg) {
 		cout << "parse_dataspace " << std::dec <<
@@ -1408,45 +1327,51 @@ struct object_v1 : public object {
 				" flags=0x" << std::hex << static_cast<int>(spec_defs::message_dataspace_spec::flags::get(msg)) << std::dec
 				<< endl;
 
-		rank = &spec_defs::message_dataspace_spec::rank::get(msg);
+		dataspace.rank = &spec_defs::message_dataspace_spec::rank::get(msg);
 
+		uint8_t version = spec_defs::message_dataspace_spec::version::get(msg);
 
-		if (spec_defs::message_dataspace_spec::version::get(msg) == 1) {
+		if (version == 1) {
 			// version 1
 
-			_shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1);
+			dataspace._shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1);
 
-			if (spec_defs::message_dataspace_spec::flags::get(msg)&0x01) {
-				max_shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1 + *rank*SIZE_OF_LENGTH);
+			if (spec_defs::message_dataspace_spec::flags::get(msg) & 0b0001u) {
+				dataspace.max_shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1 + *dataspace.rank*SIZE_OF_LENGTH);
 			} else {
-				max_shape = nullptr;
+				dataspace.max_shape = nullptr;
 			}
 
-			if (spec_defs::message_dataspace_spec::flags::get(msg)&0x02) {
-				if (spec_defs::message_dataspace_spec::flags::get(msg)&0x01) {
-					permutation = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1 + (*rank*SIZE_OF_LENGTH)*2);
+			if (spec_defs::message_dataspace_spec::flags::get(msg) & 0b0010u) {
+				if (spec_defs::message_dataspace_spec::flags::get(msg) & 0b0001u) {
+					dataspace.permutation = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1 + (*dataspace.rank*SIZE_OF_LENGTH)*2);
 				} else {
-					permutation = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1 + *rank*SIZE_OF_LENGTH);
+					dataspace.permutation = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v1 + *dataspace.rank*SIZE_OF_LENGTH);
 				}
 			} else {
-				permutation = nullptr;
+				dataspace.permutation = nullptr;
 			}
 
-		} else if (spec_defs::message_dataspace_spec::version::get(msg) == 2) {
+		} else if (version == 2) {
 			// version 2
 
-			_shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v2);
-			if (spec_defs::message_dataspace_spec::flags::get(msg)&0x01) {
-				max_shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v2 + *rank*SIZE_OF_LENGTH);
+			dataspace._shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v2);
+
+			if (spec_defs::message_dataspace_spec::flags::get(msg) & 0b0001u) {
+				dataspace.max_shape = reinterpret_cast<length_type*>(msg + spec_defs::message_dataspace_spec::size_v2 + *dataspace.rank*SIZE_OF_LENGTH);
 			} else {
-				max_shape = nullptr;
+				dataspace.max_shape = nullptr;
 			}
 
 			// in version 2 permutation is removed, because it was never implemented.
-			permutation = nullptr;
+			dataspace.permutation = nullptr;
 		}
 
 	}
+
+	struct {
+		uint32_t * size_of_elements;
+	} datatype;
 
 	void parse_datatype(uint8_t * msg) {
 		cout << "parse_datatype " << std::dec <<
@@ -1455,16 +1380,20 @@ struct object_v1 : public object {
 				<< endl;
 
 		// TODO
-		size_of_elements = &spec_defs::message_datatype_spec::size_of_elements::get(msg);
+		datatype.size_of_elements = &spec_defs::message_datatype_spec::size_of_elements::get(msg);
 
 	}
+
+	struct {
+		uint8_t * value;
+	} fillvalue;
 
 	void parse_fillvalue_old(uint8_t * msg) {
 		cout << "parse_datatype " << std::dec <<
 				" size=" << static_cast<unsigned>(spec_defs::message_fillvalue_old_spec::size_of_fillvalue::get(msg))
 				<< endl;
 		// TODO
-		fillvalue = msg + spec_defs::message_fillvalue_old_spec::size;
+		fillvalue.value = msg + spec_defs::message_fillvalue_old_spec::size;
 	}
 
 	void parse_fillvalue(uint8_t * msg) {
@@ -1476,88 +1405,107 @@ struct object_v1 : public object {
 				endl;
 		// TODO
 		if (spec_defs::message_fillvalue_spec::version::get(msg) == 1 or spec_defs::message_fillvalue_spec::fillvalue_defined::get(msg) != 0) {
-			fillvalue = msg + spec_defs::message_fillvalue_spec::size + sizeof(uint32_t);
+			fillvalue.value = msg + spec_defs::message_fillvalue_spec::size + sizeof(uint32_t);
 		}
 	}
+
+	struct {
+		uint8_t version;
+
+		uint8_t layout_class;
+		offset_type data_address;
+
+		uint8_t * dimensionality;
+		uint32_t * _shape_of_chunk;
+		uint32_t * size_of_data_element_of_chunk;
+
+		// compact data optionnal elements
+		uint32_t compact_data_size;
+
+		uint64_t size_of_continuous_data;
+
+		offset_type chunk_btree_v1_root;
+
+	} datalayout;
 
 	void parse_datalayout(uint8_t * msg) {
 		cout << "parse_datalayout " << std::dec <<
 				" version=" << static_cast<unsigned>(spec_defs::message_data_layout_v1_spec::version::get(msg)) <<
 				endl;
 
-		auto version = spec_defs::message_data_layout_v1_spec::version::get(msg);
-		if (version == 1 or version == 2)
+		datalayout.version = spec_defs::message_data_layout_v1_spec::version::get(msg);
+		if (datalayout.version == 1 or datalayout.version == 2)
 		{
-			layout_class = spec_defs::message_data_layout_v1_spec::layout_class::get(msg);
-			dimensionality = &spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
+			datalayout.layout_class = spec_defs::message_data_layout_v1_spec::layout_class::get(msg);
+			datalayout.dimensionality = &spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
 
-			if (layout_class != 0) {
-				data_address = read_at<offset_type>(msg+spec_defs::message_data_layout_v1_spec::size);
+			if (datalayout.layout_class != 0) {
+				datalayout.data_address = read_at<offset_type>(msg+spec_defs::message_data_layout_v1_spec::size);
 			} else {
-				data_address = file->to_offset(msg
+				datalayout.data_address = file->to_offset(msg
 						+ spec_defs::message_data_layout_v1_spec::size
-						+ *dimensionality * sizeof(offset_type)
+						+ *datalayout.dimensionality * sizeof(offset_type)
 						+ sizeof(uint32_t));
 			}
 
-			_shape_of_chunk = reinterpret_cast<uint32_t*>(
-					msg + spec_defs::message_data_layout_v1_spec::size + ((layout_class==0)?0:sizeof(offset_type)));
+			datalayout._shape_of_chunk = reinterpret_cast<uint32_t*>(
+					msg + spec_defs::message_data_layout_v1_spec::size + ((datalayout.layout_class==0)?0:sizeof(offset_type)));
 
-			if(layout_class == 2) { // chunked
-				size_of_data_element_of_chunk = reinterpret_cast<uint32_t*>(
+			if(datalayout.layout_class == 2) { // chunked
+				datalayout.size_of_data_element_of_chunk = reinterpret_cast<uint32_t*>(
 						msg + spec_defs::message_data_layout_v1_spec::size
 						+ sizeof(offset_type)
-						+ *dimensionality * sizeof(uint32_t)
+						+ *datalayout.dimensionality * sizeof(uint32_t)
 						+ sizeof(uint32_t));
-			} else if (layout_class == 0) { // compact
-				compact_data_size = read_at<uint32_t>(
+			} else if (datalayout.layout_class == 0) { // compact
+				datalayout.compact_data_size = read_at<uint32_t>(
 						msg + spec_defs::message_data_layout_v1_spec::size
-						+ *dimensionality * sizeof(offset_type));
+						+ *datalayout.dimensionality * sizeof(offset_type));
 			}
 
 
-		} else if (version == 3) {
-			layout_class = spec_defs::message_data_layout_v3_spec::layout_class::get(msg);
-			if (layout_class == 0) { // COMPACT
-				compact_data_size = read_at<uint16_t>(msg + spec_defs::message_data_layout_v3_spec::size);
-				data_address = file->to_offset(msg
+		} else if (datalayout.version == 3) {
+			datalayout.layout_class = spec_defs::message_data_layout_v3_spec::layout_class::get(msg);
+			if (datalayout.layout_class == 0) { // COMPACT
+				datalayout.compact_data_size = read_at<uint16_t>(msg + spec_defs::message_data_layout_v3_spec::size);
+				datalayout.data_address = file->to_offset(msg
 								+ spec_defs::message_data_layout_v3_spec::size
 								+ sizeof(uint16_t));
-			} else if (layout_class == 1) { // CONTINUOUS
-				data_address = read_at<offset_type>(msg + spec_defs::message_data_layout_v3_spec::size);
-				size_of_continuous_data = read_at<length_type>(msg + spec_defs::message_data_layout_v3_spec::size + sizeof(offset_type));
-			} else if (layout_class == 2) { // CHUNKED
-				dimensionality = msg + spec_defs::message_data_layout_v3_spec::size;
-				chunk_btree_v1_root = read_at<offset_type>(msg + spec_defs::message_data_layout_v3_spec::size + sizeof(uint8_t));
-				_shape_of_chunk = reinterpret_cast<uint32_t*>(
+			} else if (datalayout.layout_class == 1) { // CONTINUOUS
+				datalayout.data_address = read_at<offset_type>(msg + spec_defs::message_data_layout_v3_spec::size);
+				datalayout.size_of_continuous_data = read_at<length_type>(msg + spec_defs::message_data_layout_v3_spec::size + sizeof(offset_type));
+			} else if (datalayout.layout_class == 2) { // CHUNKED
+				datalayout.dimensionality = msg + spec_defs::message_data_layout_v3_spec::size;
+				datalayout.chunk_btree_v1_root = read_at<offset_type>(msg + spec_defs::message_data_layout_v3_spec::size + sizeof(uint8_t));
+				datalayout._shape_of_chunk = reinterpret_cast<uint32_t*>(
 						msg
 						+ spec_defs::message_data_layout_v3_spec::size
 						+ sizeof(uint8_t) // dimensionality
 						+ sizeof(offset_type) // data_address
 						);
-				size_of_data_element_of_chunk = reinterpret_cast<uint32_t*>(
+				datalayout.size_of_data_element_of_chunk = reinterpret_cast<uint32_t*>(
 						msg + spec_defs::message_data_layout_v3_spec::size
 						+ sizeof(uint8_t)
 						+ sizeof(offset_type)
-						+ *dimensionality * sizeof(uint32_t));
+						+ *datalayout.dimensionality * sizeof(uint32_t));
 			}
-		} else if (version == 4) {
-			layout_class = spec_defs::message_data_layout_v4_spec::layout_class::get(msg);
-			if (layout_class == 0) { // COMPACT same as V3
-				compact_data_size = read_at<uint16_t>(msg + spec_defs::message_data_layout_v4_spec::size);
-				data_address = file->to_offset(msg
+		} else if (datalayout.version == 4) {
+			datalayout.layout_class = spec_defs::message_data_layout_v4_spec::layout_class::get(msg);
+			if (datalayout.layout_class == 0) { // COMPACT same as V3
+				datalayout.compact_data_size = read_at<uint16_t>(msg + spec_defs::message_data_layout_v4_spec::size);
+				datalayout.data_address = file->to_offset(msg
 								+ spec_defs::message_data_layout_v4_spec::size
 								+ sizeof(uint16_t));
-			} else if (layout_class == 1) { // CONTINUOUS same as V3
-				data_address = read_at<offset_type>(msg + spec_defs::message_data_layout_v4_spec::size);
-				size_of_continuous_data = read_at<length_type>(msg
+			} else if (datalayout.layout_class == 1) { // CONTINUOUS same as V3
+				datalayout.data_address = read_at<offset_type>(msg + spec_defs::message_data_layout_v4_spec::size);
+				datalayout.size_of_continuous_data = read_at<length_type>(msg
 						+ spec_defs::message_data_layout_v4_spec::size
 						+ sizeof(offset_type));
-			} else if (layout_class == 2) { // CHUNKED /!\ not the same as V3
+			} else if (datalayout.layout_class == 2) { // CHUNKED /!\ not the same as V3
 				// TODO: flags
-				dimensionality = msg + spec_defs::message_data_layout_v4_spec::size + sizeof(uint8_t);
+				datalayout.dimensionality = msg + spec_defs::message_data_layout_v4_spec::size + sizeof(uint8_t);
 				// TODO: Dimension Size Encoded Length
-				_shape_of_chunk = reinterpret_cast<uint32_t*>(
+				datalayout._shape_of_chunk = reinterpret_cast<uint32_t*>(
 						msg
 						+ spec_defs::message_data_layout_v4_spec::size // header
 						+ sizeof(uint8_t) // flags
@@ -1572,7 +1520,7 @@ struct object_v1 : public object {
 						+ sizeof(uint8_t) // flags
 						+ sizeof(uint8_t) // dimentionnality
 						+ sizeof(uint8_t) // Dimension Size Encoded Length
-						+ *dimensionality * sizeof(uint32_t) // shape_of_chunk;
+						+ *datalayout.dimensionality * sizeof(uint32_t) // shape_of_chunk;
 						);
 
 				// TODO: parse indexing data
@@ -1595,18 +1543,18 @@ struct object_v1 : public object {
 					break;
 				}
 
-				data_address = read_at<offset_type>(
+				datalayout.data_address = read_at<offset_type>(
 						msg
 						+ spec_defs::message_data_layout_v4_spec::size // header
 						+ sizeof(uint8_t) // flags
 						+ sizeof(uint8_t) // dimentionnality
 						+ sizeof(uint8_t) // Dimension Size Encoded Length
-						+ *dimensionality * sizeof(uint32_t) // shape_of_chunk;
+						+ *datalayout.dimensionality * sizeof(uint32_t) // shape_of_chunk;
 						+ sizeof(uint8_t) // index_type
 						+ size_of_index_data
 						);
 
-			} else if (layout_class == 3) { // VIRTUAL
+			} else if (datalayout.layout_class == 3) { // VIRTUAL
 				// TODO: defined in HDF5-1.10
 			}
 		}
@@ -1615,185 +1563,228 @@ struct object_v1 : public object {
 		// TODO
 	}
 
+	uint32_t _modification_time;
+
 	void parse_object_modifcation_time(uint8_t * msg) {
 		cout << "parse_object_modifcation_time " << std::dec <<
 				" version=" << static_cast<unsigned>(spec_defs::message_object_modification_time_spec::version::get(msg)) <<
 				" time=" << static_cast<unsigned>(spec_defs::message_object_modification_time_spec::time::get(msg)) <<
 				endl;
-		// TODO
+		uint8_t version = spec_defs::message_object_modification_time_spec::version::get(msg);
+		if (version != 1)
+			throw EXCEPTION("unknown modification time version (%d)", version);
+		_modification_time = spec_defs::message_object_modification_time_spec::time::get(msg);
 	}
+
+	char const * _comment;
+
+	void parse_comment(uint8_t * msg) {
+		_comment = reinterpret_cast<char *>(msg);
+	}
+
+	struct {
+		shared_ptr<local_heap> lheap;
+		offset_type group_btree_v1_root;
+	} symbol_table;
 
 	void parse_symbol_table(uint8_t * msg) {
 		cout << "parse_symbol_table " << std::dec
 				<< spec_defs::message_symbole_table_spec::local_heap_address::get(msg) << " "
 				<< spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg)
 				<< endl;
-		lheap = file->make_local_heap(spec_defs::message_symbole_table_spec::local_heap_address::get(msg));
-		group_btree_v1_root = spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg);
+		symbol_table.lheap = file->make_local_heap(spec_defs::message_symbole_table_spec::local_heap_address::get(msg));
+		symbol_table.group_btree_v1_root = spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg);
 	}
 
-	void parse_message(uint8_t * current_message) {
-		uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
-		uint16_t message_size   = spec_defs::message_header_v1_spec::size_of_message::get(current_message);
-		uint8_t message_flags   = spec_defs::message_header_v1_spec::flags::get(current_message);
+	object_commom(file_impl * file, uint8_t * addr) : object{file, addr}
+	{
+		symbol_table.group_btree_v1_root = undef_offset;
+		dataspace.rank = nullptr;
+		datalayout.layout_class = -1;
+		datalayout.dimensionality = 0;
+		datalayout.size_of_continuous_data = 0;
+		attribute_info.has_attribute_btree = false;
+		_modification_time = 0;
+		_comment = nullptr;
+	}
 
-		switch(message_type) {
-		case 0x0001:
-			parse_dataspace(current_message+spec_defs::message_header_v1_spec::size);
+	void dispatch_message(uint8_t type, uint8_t * data)
+	{
+		switch(type) {
+		case MSG_DATASPACE:
+			parse_dataspace(data);
 			break;
-		case 0x0003:
-			parse_datatype(current_message+spec_defs::message_header_v1_spec::size);
+		case MSG_LINK_INFO:
 			break;
-		case 0x0004:
-			parse_fillvalue_old(current_message+spec_defs::message_header_v1_spec::size);
+		case MSG_DATATYPE:
+			parse_datatype(data);
 			break;
-		case 0x0005:
-			parse_fillvalue(current_message+spec_defs::message_header_v1_spec::size);
+		case MSG_FILL_VALUE_OLD:
+			parse_fillvalue_old(data);
 			break;
-		case 0x0008:
-			parse_datalayout(current_message+spec_defs::message_header_v1_spec::size);
+		case MSG_FILL_VALUE:
+			parse_fillvalue(data);
 			break;
-		case 0x000C:
+		case MSG_LINK:
+			break;
+		case MSG_DATA_STORAGE:
+			break;
+		case MSG_DATA_LAYOUT:
+			parse_datalayout(data);
+			break;
+		case MSG_BOGUS:
+			break;
+		case MSG_GROUP_INFO:
+			break;
+		case MSG_DATA_STORAGE_FILTER_PIPELINE:
+			break;
+		case MSG_ATTRIBUTE:
 			// ignore attribute message
 			break;
-		case 0x0012:
-			parse_object_modifcation_time(current_message+spec_defs::message_header_v1_spec::size);
+		case MSG_OBJECT_COMMENT:
+			parse_comment(data);
 			break;
-		case 0x0011:
-			parse_symbol_table(current_message+spec_defs::message_header_v1_spec::size);
+		case MSG_OBJECT_MODIFICATION_TIME_OLD:
 			break;
-		case 0x0015:
-			parse_attribute_info(current_message+spec_defs::message_header_v1_spec::size);
+		case MSG_SHARED_MESSAGE_TABLE:
+			break;
+		case MSG_OBJECT_HEADER_CONTINUATION:
+			break;
+		case MSG_SYMBOL_TABLE:
+			parse_symbol_table(data);
+			break;
+		case MSG_OBJECT_MODIFICATION_TIME:
+			parse_object_modifcation_time(data);
+			break;
+		case MSG_BTREE_K_VALUE:
+			break;
+		case MSG_DRIVER_INFO:
+			break;
+		case MSG_ATTRIBUTE_INFO:
+			parse_attribute_info(data);
 			break;
 		default:
-			cout << "found message <@" << static_cast<void*>(current_message)
-					<< " type = 0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(message_type) << std::hex
-					<< " size=" << message_size
-					<< " flags=" << std::hex << static_cast<int>(message_flags) << ">" << endl;
+//			cout << "found message <@" << static_cast<void*>(data)
+//					<< " type = 0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(type) << std::hex
+//					<< " size=" << header.size
+//					<< " flags=" << std::hex << static_cast<int>(header.flags) << ">" << endl;
 			break;
 		}
 	}
 
-	struct message_list {
-		file_impl *   _file;
-		uint64_t      _msg_count;
-		uint8_t *     _bgn;
-		uint8_t *     _end;
 
-		message_list(file_impl * file, uint64_t msg_count, uint8_t * bgn, uint8_t * end) :
-			_file{file}, _msg_count{msg_count}, _bgn{bgn}, _end{end} { }
+	// this struct is incomplete.
+	struct message_block_t {
+		uint8_t * _cur;
+		uint8_t * _end;
 
-		struct iterator : public std::iterator<std::forward_iterator_tag, message_v1> {
-			file_impl * file;
-			uint64_t msg_count;
-			list<pair<uint8_t *, uint8_t *>> message_block_queue;
+		message_block_t(uint8_t * cur, uint64_t length) : _cur{cur}, _end{cur+length} { }
+		message_block_t(uint8_t * cur, uint8_t * end) : _cur{cur}, _end{end} { }
 
-			// end iterator
-			iterator() : file{nullptr}, msg_count{0ul} { }
+		message_block_t(message_block_t const &) = default;
+		message_block_t & operator=(message_block_t const &) = default;
 
-			// begin iterator
-			iterator(file_impl * file, uint64_t msg_count, uint8_t * bgn, uint8_t * end) :
-				file{file},
-				msg_count{msg_count}
-			{
-				message_block_queue.emplace_front(bgn, end);
-			}
+		message_block_t & operator++();
 
-			message_v1 operator*() const
-			{
-				return message_v1{message_block_queue.front().first};
-			}
-
-			void _next_msg()
-			{
-				if (msg_count <= 0ul or message_block_queue.empty())
-					throw EXCEPTION("message iterator overflow");
-				message_block_queue.front().first += spec_defs::message_header_v1_spec::size
-					+  spec_defs::message_header_v1_spec::size_of_message::get(message_block_queue.front().first);
-				--msg_count;
-				while(not message_block_queue.empty()) {
-					if (message_block_queue.front().first >= message_block_queue.front().second) {
-						message_block_queue.pop_front();
-					} else {
-						break;
-					}
-				}
-			}
-
-			// iterate throw message, handling MSG_OBJECT_HEADER_CONTINUATION
-			iterator & operator++()
-			{
-				_next_msg();
-
-				// go to next message
-				while (not message_block_queue.empty()) {
-					uint8_t * msg = message_block_queue.front().first;
-					uint8_t message_type = spec_defs::message_header_v1_spec::type::get(msg);
-					if (message_type == MSG_OBJECT_HEADER_CONTINUATION) {
-						_next_msg();
-						// go to the sub list.
-						uint64_t offset = spec_defs::message_object_header_continuation_spec::offset::get(msg+spec_defs::message_header_v1_spec::size);
-						uint64_t length = spec_defs::message_object_header_continuation_spec::length::get(msg+spec_defs::message_header_v1_spec::size);
-						message_block_queue.emplace_front(file->to_address(offset), file->to_address(offset+length));
-					} else {
-						return *this;
-					}
-				}
-
-				return *this;
-
-			}
-
-			bool operator==(iterator const & x) const
-			{
-				return msg_count == x.msg_count;
-			}
-
-			bool operator!=(iterator const & x) const
-			{
-				return msg_count != x.msg_count;
-			}
-
-		};
-
-		iterator begin() const {
-			return iterator{_file, _msg_count, _bgn, _end};
+		uint8_t * operator*() const
+		{
+			return _cur;
 		}
 
-		iterator end() const {
-			return iterator{};
+		bool end() const
+		{
+			return _cur > _end;
 		}
 
 	};
 
 
-	template<typename F>
-	void foreach_messages(F func) const {
+};
 
+struct object_v1 : public object_commom {
+	using file_object::file;
+	using file_object::memory_addr;
+
+	using object_commom::dataspace;
+	using object_commom::datalayout;
+	using object_commom::datatype;
+	using object_commom::fillvalue;
+	using object_commom::symbol_table;
+	using object_commom::_modification_time;
+	using object_commom::_comment;
+
+	using object_commom::dispatch_message;
+
+	struct message_block_v1 : public object_commom::message_block_t {
+
+		message_block_v1(uint8_t * cur, uint64_t length) : object_commom::message_block_t{cur, length} { }
+		message_block_v1(uint8_t * cur, uint8_t * end) : object_commom::message_block_t{cur, end} { }
+		message_block_v1(file_impl & file, uint8_t * msg) :
+			message_block_v1{
+				file.to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg)),
+				spec_defs::message_object_header_continuation_spec::length::get(msg)}
+		{
+
+		}
+
+		message_block_v1 & operator++() {
+			object_commom::message_block_t::_cur += spec_defs::message_header_v1_spec::size
+					+ spec_defs::message_header_v1_spec::size_of_message::get(object_commom::message_block_t::_cur);
+			return *this;
+		}
+
+	};
+
+	using spec = typename spec_defs::object_header_v1_spec;
+
+	auto get_msg_block()
+	{
+		// align the offset.
+		uint64_t offset = (((file->to_offset(memory_addr)+spec::size)-1)&~0x0007u)+0x08u;
+		return message_block_v1(
+				file->to_address(offset),
+				memory_addr+spec::header_size::get(memory_addr));
+	}
+
+	object_v1(file_impl * file, uint8_t * addr) : object_commom{file, addr}
+	{
+		cout << "creating object v1, object cache size = TODO" << endl;
+		parse_messages();
+	}
+
+	virtual ~object_v1() { }
+
+	struct message_header_t {
+		uint8_t type; uint16_t size; uint8_t flags;
+		message_header_t(uint8_t type, uint16_t size, uint8_t flags) : type{type}, size{size}, flags{flags} { }
+	};
+
+	void parse_messages()
+	{
 		uint64_t msg_count = spec::total_number_of_header_message::get(memory_addr);
 		cout << "parsing "<< msg_count <<" messages" << endl;
 		cout << "object header size = " << spec::header_size::get(memory_addr) << endl;
 
-		list<pair<offset_type, offset_type>> message_block_queue;
-		message_block_queue.push_back(pair<offset_type, offset_type>{
-			first_message(),
-			file->to_offset(memory_addr)+spec::size+spec::header_size::get(memory_addr)}
-		);
+		list<message_block_v1> message_block_queue;
 
-		while(!message_block_queue.empty()) {
-			uint8_t * msg = file->to_address(message_block_queue.front().first);
-			uint8_t * end = file->to_address(message_block_queue.front().second);
-			while(msg < end and msg_count > 0ul) {
-				uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(msg);
-				if (message_type == 0x0010) {
-					uint64_t offset = spec_defs::message_object_header_continuation_spec::offset::get(msg+spec_defs::message_header_v1_spec::size);
-					uint64_t length = spec_defs::message_object_header_continuation_spec::length::get(msg+spec_defs::message_header_v1_spec::size);
-					message_block_queue.push_back(pair<offset_type, offset_type>{offset, offset+length});
+		message_block_queue.push_back(get_msg_block());
+
+		while(not message_block_queue.empty()) {
+
+			for (auto msg = message_block_queue.front(); not msg.end(); ++msg) {
+				auto type = spec_defs::message_header_v1_spec::type::get(*msg);
+				auto msg_data = *msg + spec_defs::message_header_v1_spec::size;
+
+				cout << "found message <@" << static_cast<void*>(msg_data)
+						<< " type = 0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(type) << std::hex
+						<< " size=" << spec_defs::message_header_v1_spec::size_of_message::get(*msg)
+						<< " flags=" << std::hex << static_cast<int>(spec_defs::message_header_v1_spec::flags::get(*msg)) << ">" << endl;
+
+				if (type == MSG_OBJECT_HEADER_CONTINUATION) {
+					message_block_queue.push_back(message_block_v1(*file, msg_data));
 				} else {
-					func(msg);
+					dispatch_message(type, msg_data);
 				}
-				msg += spec_defs::message_header_v1_spec::size
-					+  spec_defs::message_header_v1_spec::size_of_message::get(msg);
 				--msg_count;
 			}
 			message_block_queue.pop_front();
@@ -1813,45 +1804,45 @@ struct object_v1 : public object {
 	}
 
 	virtual vector<size_t> shape() const override {
-		if (_shape) {
-			return vector<size_t>{&_shape[0], &_shape[*rank]};
+		if (dataspace._shape) {
+			return vector<size_t>{&dataspace._shape[0], &dataspace._shape[*dataspace.rank]};
 		}
 		throw EXCEPTION("shape is not defined");
 	}
 
 	virtual size_t shape(int i) const override {
-		if (not _shape)
+		if (not dataspace._shape)
 			throw EXCEPTION("Shape is not defined");
-		if (i >= * rank)
-			throw EXCEPTION("request shape is out of bounds (%d)", static_cast<int>(*rank));
-		return _shape[i];
+		if (i >= * dataspace.rank)
+			throw EXCEPTION("request shape is out of bounds (%d)", static_cast<int>(*dataspace.rank));
+		return dataspace._shape[i];
 	}
 
 	virtual uint64_t element_size() const override {
-		return *size_of_elements;
+		return *datatype.size_of_elements;
 	}
 
 	virtual uint8_t * continuous_data() const override {
-		return file->to_address(data_address);
+		return file->to_address(datalayout.data_address);
 	}
 
 	virtual uint8_t * fill_value() const override {
-		return fillvalue;
+		return fillvalue.value;
 	}
 
 	virtual uint8_t data_layout() const override {
-		return layout_class;
+		return datalayout.layout_class;
 	}
 
 	virtual vector<size_t> shape_of_chunk() const override {
-		if (_shape_of_chunk) {
-			return vector<size_t>{&_shape_of_chunk[0], &_shape_of_chunk[*rank]};
+		if (datalayout._shape_of_chunk) {
+			return vector<size_t>{&datalayout._shape_of_chunk[0], &datalayout._shape_of_chunk[*dataspace.rank]};
 		}
 		throw EXCEPTION("shape_of_chunk is not defined");
 	}
 
 	char const * _get_link_name(uint64_t offset) const {
-		return reinterpret_cast<char *>(lheap->get_data(offset));
+		return reinterpret_cast<char *>(symbol_table.lheap->get_data(offset));
 	}
 
 	offset_type _group_find(char const * key) const
@@ -1881,7 +1872,7 @@ struct object_v1 : public object {
 
 	/** return group_symbole_table that content the key **/
 	offset_type _group_find_key(char const * key) const {
-		group_btree_v1 cur{file, file->to_address(group_btree_v1_root)};
+		group_btree_v1 cur{file, file->to_address(symbol_table.group_btree_v1_root)};
 		if (std::strcmp(key, _get_link_name(cur.get_key(cur.get_entries_count()))) > 0)
 			throw EXCEPTION("Key `%s' not found", key);
 
@@ -1906,8 +1897,8 @@ struct object_v1 : public object {
 	}
 
 	bool key_is_in_chunk(uint64_t const * key, length_type const * offset) const {
-		for(int i = 0; i < *rank; ++i) {
-			if(key[i] >= (offset[i]+_shape_of_chunk[i])) {
+		for(int i = 0; i < *dataspace.rank; ++i) {
+			if(key[i] >= (offset[i]+datalayout._shape_of_chunk[i])) {
 				return false;
 			}
 		}
@@ -1918,7 +1909,7 @@ struct object_v1 : public object {
 		size_t i = cur.get_entries_count()-1;
 		while (i >= 0) {
 			length_type * offset = cur.get_offset(i);
-			if (chunk_offset_cmp(key, offset, *rank) >= 0) {
+			if (chunk_offset_cmp(key, offset, *dataspace.rank) >= 0) {
 				break;
 			}
 			--i;
@@ -1928,20 +1919,20 @@ struct object_v1 : public object {
 
 	virtual uint8_t * dataset_find_chunk(uint64_t const * key) const override {
 
-		chunk_btree_v1 cur{file, file->to_address(chunk_btree_v1_root), *dimensionality};
+		chunk_btree_v1 cur{file, file->to_address(datalayout.chunk_btree_v1_root), *datalayout.dimensionality};
 
 		// Are we bellow the first chunk ?
-		if (chunk_offset_cmp(key, cur.get_offset(0), *rank) < 0) {
+		if (chunk_offset_cmp(key, cur.get_offset(0), *dataspace.rank) < 0) {
 			return nullptr;
 		}
 
 		while(cur.get_depth() != 0) {
 			size_t i = _find_sub_chunk(cur, key);
-			cur = chunk_btree_v1{file, file->to_address(cur.get_node(i)), *dimensionality};
+			cur = chunk_btree_v1{file, file->to_address(cur.get_node(i)), *datalayout.dimensionality};
 		}
 
 		size_t i = _find_sub_chunk(cur, key);
-		if (chunk_offset_cmp(key, cur.get_offset(i), *rank) == 0) { // check if we are within the chunk
+		if (chunk_offset_cmp(key, cur.get_offset(i), *dataspace.rank) == 0) { // check if we are within the chunk
 			return file->to_address(cur.get_node(i));
 		} else {
 			return nullptr;
@@ -1951,15 +1942,15 @@ struct object_v1 : public object {
 
 	virtual auto keys() const -> vector<char const *> override {
 
-		if(group_btree_v1_root == undef_offset)
+		if(symbol_table.group_btree_v1_root == undef_offset)
 			return vector<char const *>{};
 
 		vector<char const *> ret;
 		stack<group_btree_v1> stack;
 
 		vector<offset_type> group_symbole_tables;
-		cout << "btree-root = " << std::hex << group_btree_v1_root << std::dec << endl;
-		stack.push(group_btree_v1{file, file->to_address(group_btree_v1_root)});
+		cout << "btree-root = " << std::hex << symbol_table.group_btree_v1_root << std::dec << endl;
+		stack.push(group_btree_v1{file, file->to_address(symbol_table.group_btree_v1_root)});
 		while(not stack.empty()) {
 			group_btree_v1 cur = stack.top();
 			cout << std::dec << "process node depth=" << cur.get_depth() << " entries_count=" << cur.get_entries_count() << endl;
@@ -1988,220 +1979,262 @@ struct object_v1 : public object {
 
 	}
 
-	message_list messages() const
-	{
-		uint64_t msg_count = spec::total_number_of_header_message::get(memory_addr);
-		uint8_t * bgn = file->to_address(first_message());
-		uint8_t * end = memory_addr+spec::size+spec::header_size::get(memory_addr);
-		return message_list{file, msg_count, bgn, end};
-	}
-
-
 	virtual auto list_attributes() const -> vector<char const *> override {
 		vector<char const *> ret;
 
-		for (auto msg: messages()) {
-			if (msg.type() == MSG_ATTRIBUTE) {
-				uint8_t * message_body = msg.data();
-				auto version = spec_defs::message_attribute_v1_spec::version::get(message_body);
-
-				if(version == 1) {
-					ret.push_back(reinterpret_cast<char *>(message_body+spec_defs::message_attribute_v1_spec::size));
-				} else {
-					throw EXCEPTION("Not implemented");
-				}
-			}
-		}
-
-		if (has_attribute_btree) {
-			auto btree = btree_v2_header<typename spec_defs::btree_v2_record_type8>(file, file->to_address(attribute_name_btree_address));
-			auto xx = btree.list_records();
-			cout << "XXXXX" << endl;
-			for(auto i: xx) {
-				cout << (void*)i << endl;
-			}
-			cout << "TTTTT" << endl;
-		}
+//		for (auto msg: messages()) {
+//			if (msg.type() == MSG_ATTRIBUTE) {
+//				uint8_t * message_body = msg.data();
+//				auto version = spec_defs::message_attribute_v1_spec::version::get(message_body);
+//
+//				if(version == 1) {
+//					ret.push_back(reinterpret_cast<char *>(message_body+spec_defs::message_attribute_v1_spec::size));
+//				} else {
+//					throw EXCEPTION("Not implemented");
+//				}
+//			}
+//		}
+//
+//		if (has_attribute_btree) {
+//			auto btree = btree_v2_header<typename spec_defs::btree_v2_record_type8>(file, file->to_address(attribute_name_btree_address));
+//			auto xx = btree.list_records();
+//			cout << "XXXXX" << endl;
+//			for(auto i: xx) {
+//				cout << (void*)i << endl;
+//			}
+//			cout << "TTTTT" << endl;
+//		}
 
 		return ret;
 	}
 
 	virtual void print_info() const override {
 		cerr << "XXXXXXXXXXXXXXXX" << endl;
-		if(has_data_set) {
+		if(dataspace.rank) {
 			cout << std::dec;
-			cout << "rank = " << static_cast<unsigned>(*rank) << endl;
+			cout << "rank = " << static_cast<unsigned>(*dataspace.rank) << endl;
 
-			if (_shape) {
+			if (dataspace._shape) {
 				cout << "shape= {";
-				for(unsigned i = 0; i < *rank-1; ++i) {
-					cout << _shape[i] << ",";
+				for(unsigned i = 0; i < *dataspace.rank-1; ++i) {
+					cout << dataspace._shape[i] << ",";
 				}
-				cout << _shape[*rank-1] << "}" << endl;
+				cout << dataspace._shape[*dataspace.rank-1] << "}" << endl;
 			}
 
-			if (max_shape) {
+			if (dataspace.max_shape) {
 				cout << "max_shape= {";
-				for(unsigned i = 0; i < *rank-1; ++i) {
-					cout << max_shape[i] << ",";
+				for(unsigned i = 0; i < *dataspace.rank-1; ++i) {
+					cout << dataspace.max_shape[i] << ",";
 				}
-				cout << max_shape[*rank-1] << "}" << endl;
+				cout << dataspace.max_shape[*dataspace.rank-1] << "}" << endl;
 			}
 
-			if (permutation) {
+			if (dataspace.permutation) {
 				cout << "permutation= {";
-				for(unsigned i = 0; i < *rank-1; ++i) {
-					cout << max_shape[i] << ",";
+				for(unsigned i = 0; i < *dataspace.rank-1; ++i) {
+					cout << dataspace.max_shape[i] << ",";
 				}
-				cout << max_shape[*rank-1] << "}" << endl;
+				cout << dataspace.max_shape[*dataspace.rank-1] << "}" << endl;
 			}
 
-			if (size_of_elements) {
-				cout << "size_of_elements= " << static_cast<unsigned>(*size_of_elements) << endl;
+			if (datatype.size_of_elements) {
+				cout << "size_of_elements= " << static_cast<unsigned>(*datatype.size_of_elements) << endl;
 			}
 
-			if (fillvalue) {
+			if (fillvalue.value) {
 				cout << "has_fillvalue" << endl;
 			} else {
 				cout << "do not has fillvalue" << endl;
 			}
 
-			if (_shape_of_chunk) {
-				cout << "dimensionality=" << static_cast<unsigned>(*dimensionality) << endl;
-				cout << "shape_of_chunk= {";
-				for(unsigned i = 0; i < *dimensionality-1; ++i) {
-					cout << _shape_of_chunk[i] << ",";
-				}
-				cout << _shape_of_chunk[*dimensionality-1] << "}" << endl;
-			}
+//			if (_shape_of_chunk) {
+//				cout << "dimensionality=" << static_cast<unsigned>(*dimensionality) << endl;
+//				cout << "shape_of_chunk= {";
+//				for(unsigned i = 0; i < *dimensionality-1; ++i) {
+//					cout << _shape_of_chunk[i] << ",";
+//				}
+//				cout << _shape_of_chunk[*dimensionality-1] << "}" << endl;
+//			}
 
-			if (layout_class == 0) {
+			if (datalayout.layout_class == 0) {
 				cout << "compact layout" << endl;
-				cout << "size of compact data =" << compact_data_size << endl;
-				cout << "dataset address =" << data_address << endl;
-			} else if (layout_class == 1) {
+				cout << "size of compact data =" << datalayout.compact_data_size << endl;
+				cout << "dataset address =" << datalayout.data_address << endl;
+			} else if (datalayout.layout_class == 1) {
 				cout << "continuous layout" << endl;
-				cout << "dataset address = " << data_address << endl;
-			} else if (layout_class == 2) {
+				cout << "dataset address = " << datalayout.data_address << endl;
+			} else if (datalayout.layout_class == 2) {
 				cout << "chunked layout (btree-v1)" << endl;
-				cout << "dataset address = " << data_address << endl;
+				cout << "dataset address = " << datalayout.data_address << endl;
 			}
 		}
 
-		auto attributes = list_attributes();
-
-		cout << "Attributes:" << endl;
-		for (auto a: attributes) {
-			cout << a << endl;
-		}
+//		auto attributes = list_attributes();
+//
+//		cout << "Attributes:" << endl;
+//		for (auto a: attributes) {
+//			cout << a << endl;
+//		}
 
 	}
 
 	virtual auto modification_time() const -> uint32_t override
 	{
-		auto l = messages();
-		auto msg = std::find_if(l.begin(), l.end(), [](message_v1 m) -> bool { return m.type() == MSG_OBJECT_MODIFICATION_TIME; });
-		if (msg == l.end()) {
-			return numeric_limits<uint32_t>::max();
-		} else {
-			uint8_t * message_body = (*msg).data();
-			uint8_t version = spec_defs::message_object_modification_time_spec::version::get(message_body);
-			if (version != 1)
-				throw EXCEPTION("unknown modification time version (%d)", version);
-			return spec_defs::message_object_modification_time_spec::time::get(message_body);
-		}
+		return _modification_time;
 	}
 
 	virtual auto comment() const -> char const * override
 	{
-		char const * comment = nullptr;
-		foreach_messages([&comment] (uint8_t * current_message) {
-			uint8_t message_type    = spec_defs::message_header_v1_spec::type::get(current_message);
-			uint16_t message_size   = spec_defs::message_header_v1_spec::size_of_message::get(current_message);
-			uint8_t message_flags   = spec_defs::message_header_v1_spec::flags::get(current_message);
-			if (message_type == MSG_OBJECT_COMMENT) {
-				uint8_t * message_body = current_message+spec_defs::message_header_v1_spec::size;
-				comment = reinterpret_cast<char *>(message_body);
-			}
-		});
-		return comment;
+		return _comment;
 	}
 
 };
 
 
-struct object_v2 : public object {
+struct object_v2 : public object_commom {
 	using spec = typename spec_defs::object_header_v2_spec;
 
-	object_v2(file_impl * file, uint8_t * addr) : object{file, addr} {
-		cout << "creating object v2, object cache size = TODO" << endl;
+	using file_object::file;
+	using file_object::memory_addr;
 
-		uint64_t data_size = size_of_chunk();
-		uint8_t * msg = first_message();
+	using object_commom::dataspace;
+	using object_commom::datalayout;
+	using object_commom::datatype;
+	using object_commom::fillvalue;
+	using object_commom::symbol_table;
+	using object_commom::_modification_time;
+	using object_commom::_comment;
+	using object_commom::dispatch_message;
 
-		uint8_t * end = (first_message()+data_size);
-		while(msg < end) {
-			msg = parse_message(msg);
+	struct message_block_v2 : public object_commom::message_block_t {
+		uint64_t _header_size;
+
+		message_block_v2(uint64_t header_size, uint8_t * cur, uint64_t length) : object_commom::message_block_t{cur, length}, _header_size{header_size} { }
+		message_block_v2(uint64_t header_size, uint8_t * cur, uint8_t * end) : object_commom::message_block_t{cur, end}, _header_size{header_size} { }
+		message_block_v2(uint64_t header_size, file_impl & file, uint8_t * msg) :
+			message_block_v2{header_size,
+				file.to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg)),
+				spec_defs::message_object_header_continuation_spec::length::get(msg)}
+		{
+
 		}
 
+		message_block_v2 & operator++() {
+			object_commom::message_block_t::_cur += _header_size + spec_defs::message_header_v2_spec::size_of_message::get(object_commom::message_block_t::_cur);
+			return *this;
+		}
+
+	};
+
+	object_v2(file_impl * file, uint8_t * addr) : object_commom{file, addr} {
+		cout << "creating object v2, object cache size = TODO" << endl;
+		parse_messages();
 	}
 
 	virtual ~object_v2() { }
 
-	uint8_t get_size_of_size_of_chunk() {
-		return 0x03u&spec::flags::get(memory_addr);
+	auto get_msg_block()
+	{
+		uint64_t offset = get_object_header_size();
+		// length - 4 because of checksum.
+		uint64_t length = get_reader_for(get_size_of_size_of_chunk())(&memory_addr[offset-get_size_of_size_of_chunk()]) - 4;
+		return message_block_v2(get_message_header_size(), &memory_addr[offset], length);
 	}
 
-	bool is_attribute_creation_order_tracked() {
-		return (0x01<<2)&spec::flags::get(memory_addr);
+	uint64_t get_message_header_size() const {
+		return spec_defs::message_header_v2_spec::size + (is_attribute_creation_order_tracked()?2:0);
 	}
 
-	bool is_attribute_creation_order_indexed() {
-		return (0x01<<3)&spec::flags::get(memory_addr);
+	uint64_t get_object_header_size() const {
+		return spec::size
+				+ (has_time_fields()?16:0)
+				+ (is_non_default_attribute_storage_phase_change_stored()?4:0)
+				+ get_size_of_size_of_chunk();
 	}
 
-	bool is_non_default_attribute_storage_phase_change_stored() {
-		return (0x01<<4)&spec::flags::get(memory_addr);
+	void parse_messages()
+	{
+		uint64_t const header_size = get_message_header_size();
+
+		list<message_block_v2> message_block_queue;
+
+		message_block_queue.push_back(get_msg_block());
+
+		while(!message_block_queue.empty()) {
+			for (auto msg = message_block_queue.front(); not msg.end(); ++msg) {
+				auto type = spec_defs::message_header_v2_spec::type::get(*msg);
+				auto msg_data = *msg + spec_defs::message_header_v2_spec::size;
+
+				cout << "found message <@" << static_cast<void*>(msg_data)
+						<< " type = 0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(type) << std::hex
+						<< " size=" << spec_defs::message_header_v2_spec::size_of_message::get(*msg)
+						<< " flags=" << std::hex << static_cast<int>(spec_defs::message_header_v2_spec::flags::get(*msg)) << ">" << endl;
+
+				if (type == MSG_OBJECT_HEADER_CONTINUATION) {
+					message_block_queue.push_back(message_block_v2(header_size, *file, msg_data));
+				} else {
+					dispatch_message(type, msg_data);
+				}
+			}
+			message_block_queue.pop_front();
+		}
 	}
 
-	bool has_times_field() {
-		return (0x01<<5)&spec::flags::get(memory_addr);
+	uint8_t get_size_of_size_of_chunk() const {
+		return 1<<(0b0000'0011u&spec::flags::get(memory_addr));
+	}
+
+	bool is_attribute_creation_order_tracked() const {
+		return 0b0000'0100u & spec::flags::get(memory_addr);
+	}
+
+	bool is_attribute_creation_order_indexed() const {
+		return 0b0000'1000u & spec::flags::get(memory_addr);
+	}
+
+	bool is_non_default_attribute_storage_phase_change_stored() const {
+		return 0b0001'0000u & spec::flags::get(memory_addr);
+	}
+
+	bool has_time_fields() const {
+		return 0b0010'0000u & spec::flags::get(memory_addr);
 	}
 
 	uint32_t access_time() {
-		assert(has_times_field());
+		assert(has_time_fields());
 		return read_at<uint32_t>(memory_addr + spec::size + 0);
 	}
 
 	uint32_t modification_time() {
-		assert(has_times_field());
+		assert(has_time_fields());
 		return read_at<uint32_t>(memory_addr + spec::size + 4);
 	}
 
 	uint32_t change_time() {
-		assert(has_times_field());
+		assert(has_time_fields());
 		return read_at<uint32_t>(memory_addr + spec::size + 8);
 	}
 
 	uint32_t birth_time() {
-		assert(has_times_field());
+		assert(has_time_fields());
 		return read_at<uint32_t>(memory_addr + spec::size + 12);
 	}
 
 	uint16_t maximum_compact_attribute_count() {
 		assert(is_non_default_attribute_storage_phase_change_stored());
-		return read_at<uint16_t>(memory_addr + spec::size + (has_times_field()?16:0) + 0);
+		return read_at<uint16_t>(memory_addr + spec::size + (has_time_fields()?16:0) + 0);
 	}
 
 	uint16_t minimum_compact_attribute_count() {
 		assert(is_non_default_attribute_storage_phase_change_stored());
-		return read_at<uint16_t>(memory_addr + spec::size + (has_times_field()?16:0) + 2);
+		return read_at<uint16_t>(memory_addr + spec::size + (has_time_fields()?16:0) + 2);
 	}
 
 	uint8_t * first_message() {
 		return memory_addr
 				+ spec::size
-				+ (has_times_field()?16:0)
+				+ (has_time_fields()?16:0)
 				+ (is_non_default_attribute_storage_phase_change_stored()?4:0)
 				+ get_size_of_size_of_chunk();
 	}
@@ -2209,54 +2242,9 @@ struct object_v2 : public object {
 	uint64_t size_of_chunk() {
 		uint8_t * addr = memory_addr
 				+ spec::size
-				+ (has_times_field()?16:0)
+				+ (has_time_fields()?16:0)
 				+ (is_non_default_attribute_storage_phase_change_stored()?4:0);
 		return get_reader_for(get_size_of_size_of_chunk())(addr);
-	}
-
-	uint8_t * parse_message(uint8_t * current_message) {
-		uint8_t message_type = spec_defs::message_header_v2_spec::type::get(current_message);
-		cout << "found mesage <@" << current_message << " type = " << message_type << ">" << endl;
-
-		switch(message_type) {
-		case 1:
-			break;
-		case 2:
-			break;
-		case 3:
-			break;
-		case 4:
-			break;
-		case 5:
-			break;
-		case 6:
-			break;
-		case 7:
-			break;
-		case 8:
-			break;
-		case 9:
-			break;
-		case 10:
-			break;
-		case 11:
-			break;
-		case 12:
-			break;
-		case 13:
-			break;
-		case 14:
-			break;
-		case 15:
-			break;
-		}
-
-		// next message
-		return current_message
-				+ spec_defs::message_header_v2_spec::size
-				+ (is_attribute_creation_order_tracked()?2:0)
-				+ spec_defs::message_header_v2_spec::size_of_message_data::get(current_message);
-
 	}
 
 };
@@ -2503,7 +2491,7 @@ struct _h5file : public _h5obj {
 	shared_ptr<_h5obj> _root_object;
 
 	template<typename T>
-	T get(uint64_t offset) {
+	T& get(uint64_t offset) {
 		return *reinterpret_cast<T*>(&data[offset]);
 	}
 
