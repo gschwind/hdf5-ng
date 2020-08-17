@@ -1596,6 +1596,56 @@ struct object_commom : public object
 		symbol_table.group_btree_v1_root = spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg);
 	}
 
+
+	struct {
+		bool has_link_info_message;
+		uint8_t flags;
+		uint64_t maximum_creation_index;
+		uint64_t fractal_head_address;
+		uint64_t name_index_b_tree_address;
+		uint64_t creation_order_index_address;
+	} link_info;
+
+	void parse_link_info(uint8_t * msg)
+	{
+		uint8_t version = spec_defs::message_link_info_spec::version::get(msg);
+		if (version != 0) {
+			throw EXCEPTION("Unknown Link Info version");
+		}
+
+		link_info.has_link_info_message = true;
+
+		link_info.flags = spec_defs::message_link_info_spec::flags::get(msg);
+		uint64_t offset = spec_defs::message_link_info_spec::size;
+
+		if (link_info.flags & 0b0000'0001) {
+			link_info.maximum_creation_index = read_at<uint64_t>(&msg[offset]);
+			offset += 8;
+		} else {
+			link_info.maximum_creation_index = 0;
+		}
+
+		link_info.fractal_head_address = read_at<offset_type>(&msg[offset]);
+		offset += SIZE_OF_OFFSET;
+		link_info.name_index_b_tree_address = read_at<offset_type>(&msg[offset]);
+		offset += SIZE_OF_OFFSET;
+
+		if (link_info.flags & 0b0000'0010) {
+			link_info.creation_order_index_address = read_at<offset_type>(&msg[offset]);
+		} else {
+			link_info.creation_order_index_address = 0;
+		}
+
+		cout << "parse_link_info" << endl;
+		cout << "link_info.flags = " << std::hex << link_info.flags << std::dec << endl;
+		cout << "link_info.maximum_creation_index = " << link_info.maximum_creation_index << endl;
+		cout << "link_info.fractal_head_address = " << link_info.fractal_head_address << endl;
+		cout << "link_info.name_index_b_tree_address = " << link_info.name_index_b_tree_address << endl;
+		cout << "link_info.creation_order_index_address = " << link_info.creation_order_index_address << endl;
+
+	}
+
+
 	object_commom(file_impl * file, uint8_t * addr) : object{file, addr}
 	{
 		symbol_table.group_btree_v1_root = undef_offset;
@@ -1606,6 +1656,7 @@ struct object_commom : public object
 		attribute_info.has_attribute_btree = false;
 		_modification_time = 0;
 		_comment = nullptr;
+		link_info.has_link_info_message = false;
 	}
 
 	void dispatch_message(uint8_t type, uint8_t * data)
@@ -1615,6 +1666,7 @@ struct object_commom : public object
 			parse_dataspace(data);
 			break;
 		case MSG_LINK_INFO:
+			parse_link_info(data);
 			break;
 		case MSG_DATATYPE:
 			parse_datatype(data);

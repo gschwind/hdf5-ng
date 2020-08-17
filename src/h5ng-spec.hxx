@@ -352,6 +352,20 @@ struct message_data_layout_v3_spec : public type_spec {
 
 using message_data_layout_v4_spec = message_data_layout_v3_spec;
 
+// Layout: Link Info #0x0002
+struct message_link_info_spec : public type_spec {
+	using version                    = spec<uint8_t,     none>; // should match datatype size_of_elements
+	using flags                      = spec<uint8_t,  version>;
+	// Variable:
+	// Maximum creation time 8 bytes, optional, present if flags bit 0 is set.
+	// Fractal Heap Address: may be undef address offset_type
+	// Address of v2 B-tree offset_type
+	// Address of v2 B-tree for Creation Order index, optionnal, set if bit 1 of flags is set.
+
+	enum : uint64_t { size = last<flags>::size };
+};
+
+
 // Layout: Modification Time Message
 struct message_object_modification_time_spec : public type_spec {
 	using version                    = spec<uint8_t,     none>; // should match datatype size_of_elements
