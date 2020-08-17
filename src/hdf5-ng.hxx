@@ -1645,6 +1645,57 @@ struct object_commom : public object
 
 	}
 
+	void parse_link(uint8_t * msg)
+	{
+		uint8_t version = spec_defs::message_link_spec::version::get(msg);
+		if (version != 1) {
+			throw EXCEPTION("Unknown Link Info version");
+		}
+
+		uint8_t flags = spec_defs::message_link_info_spec::flags::get(msg);
+
+		uint64_t offset = spec_defs::message_link_info_spec::size;
+
+		uint8_t type = 0xffu;
+		if (flags & 0b0000'1000) {
+			type = read_at<uint8_t>(&msg[offset]);
+			offset += 1;
+		}
+
+		uint64_t creation_order = 0xffff'ffff'ffff'ffffu;
+		if (flags & 0b0000'1000) {
+			creation_order = read_at<uint64_t>(&msg[offset]);
+			offset += 8;
+		}
+
+		// default to zero.
+		uint8_t charset = 0x00u;
+		if (flags & 0b0001'0000) {
+			charset = read_at<uint8_t>(&msg[offset]);
+			offset += 1;
+		}
+
+		uint64_t length_of_name = 0u;
+		get_reader_for(1<<(flags&0x0000'0011u))(&msg[offset]);
+		offset += 1<<(flags&0x0000'0011u);
+
+		string link_name;
+		{
+			vector<uint8_t> link_name_s{&msg[offset], &msg[offset+length_of_name]};
+			link_name_s.push_back(0u);
+			link_name = string{link_name_s.begin(), link_name_s.end()};
+		}
+
+		// TODO: Link information.
+		cout << "parse_link" << endl;
+		cout << "flags = " << std::hex << flags << std::dec << endl;
+		cout << "type = " << static_cast<int>(type) << endl;
+		cout << "creation_order = " << creation_order << endl;
+		cout << "charset = " << (charset?"UTF-8":"ASCII") << endl;
+		cout << "length_of_name = " << length_of_name << endl;
+		cout << "name = " << link_name << endl;
+
+	}
 
 	object_commom(file_impl * file, uint8_t * addr) : object{file, addr}
 	{
@@ -1678,6 +1729,7 @@ struct object_commom : public object
 			parse_fillvalue(data);
 			break;
 		case MSG_LINK:
+			parse_link(data);
 			break;
 		case MSG_DATA_STORAGE:
 			break;

@@ -366,6 +366,21 @@ struct message_link_info_spec : public type_spec {
 };
 
 
+// Layout: Link Message #0x0006
+struct message_link_spec : public type_spec {
+	using version                    = spec<uint8_t,     none>; // should match datatype size_of_elements
+	using flags                      = spec<uint8_t,  version>;
+	// Variable:
+	// Link type 1 bytes (optional, present if flags bit 3 is set)
+	// Creation order 8 bytes (optional, present if flags bit 2 is set)
+	// Link Name charset 1 byte: (optional, present if flags bit 4 is set)
+	// Length of link name (variable size, depend on bit 0 and 1 of flags)
+	// link name: non-NULL terminated name, of lenght "Length of lonk name" ancode with charset of present or ASCII.
+	// Link information: depend on link type.
+
+	enum : uint64_t { size = last<flags>::size };
+};
+
 // Layout: Modification Time Message
 struct message_object_modification_time_spec : public type_spec {
 	using version                    = spec<uint8_t,     none>; // should match datatype size_of_elements
