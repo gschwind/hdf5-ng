@@ -103,6 +103,11 @@ static uint64_t read_at(uint8_t * addr) {
 	return *reinterpret_cast<T*>(addr);
 }
 
+template<typename T>
+static bitset<sizeof(T)*8> make_bitset(T v) {
+	return v;
+}
+
 struct slc {
 	int bgn, end, inc; // note: bgn = 0 mean begin, but end = 0 mean end.
 	slc() : bgn{0}, end{0}, inc{1} { } // all
@@ -1325,8 +1330,7 @@ struct object_commom : public object
 		cout << "parse_dataspace " << std::dec <<
 				" version="<< static_cast<int>(spec_defs::message_dataspace_spec::version::get(msg)) << " "
 				" rank=" << static_cast<int>(spec_defs::message_dataspace_spec::rank::get(msg)) << " "
-				" flags=0x" << std::hex << static_cast<int>(spec_defs::message_dataspace_spec::flags::get(msg)) << std::dec
-				<< endl;
+				" flags=0b" << make_bitset(spec_defs::message_dataspace_spec::flags::get(msg)) << endl;
 
 		dataspace.rank = &spec_defs::message_dataspace_spec::rank::get(msg);
 
@@ -1663,7 +1667,7 @@ struct object_commom : public object
 		}
 
 		cout << "parse_link_info" << endl;
-		cout << "link_info.flags = " << std::hex << link_info.flags << std::dec << endl;
+		cout << "link_info.flags = " << make_bitset(link_info.flags) << std::dec << endl;
 		cout << "link_info.maximum_creation_index = " << link_info.maximum_creation_index << endl;
 		cout << "link_info.fractal_head_address = " << link_info.fractal_head_address << endl;
 		cout << "link_info.name_index_b_tree_address = " << link_info.name_index_b_tree_address << endl;
@@ -1714,7 +1718,7 @@ struct object_commom : public object
 
 		// TODO: Link information.
 		cout << "parse_link" << endl;
-		cout << "flags = " << std::hex << flags << std::dec << endl;
+		cout << "flags = " << make_bitset(flags) << endl;
 		cout << "type = " << static_cast<int>(type) << endl;
 		cout << "creation_order = " << creation_order << endl;
 		cout << "charset = " << (charset?"UTF-8":"ASCII") << endl;
@@ -1754,7 +1758,7 @@ struct object_commom : public object
 		}
 
 		cout << "parse_global_info" << endl;
-		cout << "flags = " << std::hex << flags << std::dec << endl;
+		cout << "flags = " << make_bitset(flags) << endl;
 		cout << "maximum_compact_value = " << maximum_compact_value << endl;
 		cout << "minimum_dense_value = " << minimum_dense_value << endl;
 		cout << "estimated_number_of_entry = " << estimated_number_of_entry << endl;
@@ -1950,7 +1954,7 @@ struct object_v1 : public object_commom {
 				cout << "found message <@" << static_cast<void*>(msg_data)
 						<< " type=0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(type) << std::hex
 						<< " size=" << spec_defs::message_header_v1_spec::size_of_message::get(*msg)
-						<< " flags=0b" << std::bitset<8>(flags) << ">" << endl;
+						<< " flags=0b" << make_bitset(flags) << ">" << endl;
 
 				if (flags&0x0000'0010u) {
 					// is shared message.
@@ -2352,7 +2356,7 @@ struct object_v2 : public object_commom {
 				cout << "found message <@" << static_cast<void*>(msg_data)
 						<< " type=0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(type) << std::hex
 						<< " size=" << spec_defs::message_header_v2_spec::size_of_message::get(*msg)
-						<< " flags=0b" << std::bitset<8>(flags) << ">" << endl;
+						<< " flags=0b" << make_bitset(flags) << ">" << endl;
 
 				if (flags&0x0000'0010u) {
 					// is shared message.
