@@ -394,6 +394,34 @@ struct message_group_info_spec : public type_spec {
 	enum : uint64_t { size = last<flags>::size };
 };
 
+// Layout: Shared Message vX
+struct message_shared_vX_spec : public type_spec {
+	using version                    = spec<uint8_t,          none>;
+	using type                       = spec<uint8_t,       version>;
+	enum : uint64_t { size = last<type>::size };
+};
+
+// Layout: Shared Message v1
+struct message_shared_v1_spec : public type_spec {
+	using version                    = spec<uint8_t,          none>; // should be 1
+	using type                       = spec<uint8_t,       version>;
+	using reserved                   = spec<uint8_t[6],       type>;
+	using address                    = spec<offset_type,  reserved>;
+
+	enum : uint64_t { size = last<address>::size };
+};
+
+// Layout: Shared Message v2
+struct message_shared_v2_spec : public type_spec {
+	using version                    = spec<uint8_t,          none>; // should be 2
+	using type                       = spec<uint8_t,       version>;
+	using address                    = spec<offset_type,      type>;
+
+	enum : uint64_t { size = last<address>::size };
+};
+
+
+
 // Layout: Modification Time Message
 struct message_object_modification_time_spec : public type_spec {
 	using version                    = spec<uint8_t,     none>; // should match datatype size_of_elements

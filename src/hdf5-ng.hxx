@@ -30,6 +30,7 @@
 #include <limits>
 #include <iomanip>
 #include <algorithm>
+#include <bitset>
 
 #include "h5ng-spec.hxx"
 #include "h5ng.hxx"
@@ -1409,6 +1410,31 @@ struct object_commom : public object
 		}
 	}
 
+
+	void parse_shared(uint8_t type, uint8_t * msg) {
+		uint8_t version = spec_defs::message_shared_vX_spec::version::get(msg);
+
+		uint8_t xtype = spec_defs::message_shared_vX_spec::type::get(msg); // this parameters seems not used.
+
+		uint64_t address = 0xffff'ffff'ffff'ffffu;
+		cout << "<shared message version="<<version<<" , type=" << xtype << endl;
+		switch (version) {
+		case 1: {
+			address = spec_defs::message_shared_v1_spec::address::get(msg);
+			break;
+		}
+		case 2: {
+			address = spec_defs::message_shared_v2_spec::address::get(msg);
+			break;
+		}
+		default:
+			throw EXCEPTION("Unsupported shared message version");
+		}
+
+		dispatch_message(type, file->to_address(address));
+
+	}
+
 	struct {
 		uint8_t version;
 
@@ -1856,6 +1882,7 @@ struct object_v1 : public object_commom {
 	using object_commom::symbol_table;
 	using object_commom::_modification_time;
 	using object_commom::_comment;
+	using object_commom::parse_shared;
 
 	using object_commom::dispatch_message;
 
@@ -1917,19 +1944,29 @@ struct object_v1 : public object_commom {
 
 			for (auto msg = message_block_queue.front(); not msg.end(); ++msg) {
 				auto type = spec_defs::message_header_v1_spec::type::get(*msg);
+				auto flags = spec_defs::message_header_v1_spec::flags::get(*msg);
 				auto msg_data = *msg + spec_defs::message_header_v1_spec::size;
 
 				cout << "found message <@" << static_cast<void*>(msg_data)
-						<< " type = 0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(type) << std::hex
+						<< " type=0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(type) << std::hex
 						<< " size=" << spec_defs::message_header_v1_spec::size_of_message::get(*msg)
-						<< " flags=" << std::hex << static_cast<int>(spec_defs::message_header_v1_spec::flags::get(*msg)) << ">" << endl;
+						<< " flags=0b" << std::bitset<8>(flags) << ">" << endl;
 
-				if (type == MSG_OBJECT_HEADER_CONTINUATION) {
-					message_block_queue.push_back(message_block_v1(*file, msg_data));
+				if (flags&0x0000'0010u) {
+					// is shared message.
+
+					// FIXME: currently expect that MSG_OBJECT_HEADER_CONTINUATION cannot be shared
+					parse_shared(type, msg_data);
+
 				} else {
-					dispatch_message(type, msg_data);
+					// is inline mesage
+					if (type == MSG_OBJECT_HEADER_CONTINUATION) {
+						message_block_queue.push_back(message_block_v1(*file, msg_data));
+					} else {
+						dispatch_message(type, msg_data);
+					}
+					--msg_count;
 				}
-				--msg_count;
 			}
 			message_block_queue.pop_front();
 		}
@@ -2250,6 +2287,7 @@ struct object_v2 : public object_commom {
 	using object_commom::_modification_time;
 	using object_commom::_comment;
 	using object_commom::dispatch_message;
+	using object_commom::parse_shared;
 
 	struct message_block_v2 : public object_commom::message_block_t {
 		uint64_t _header_size;
@@ -2308,17 +2346,26 @@ struct object_v2 : public object_commom {
 		while(!message_block_queue.empty()) {
 			for (auto msg = message_block_queue.front(); not msg.end(); ++msg) {
 				auto type = spec_defs::message_header_v2_spec::type::get(*msg);
+				auto flags = spec_defs::message_header_v2_spec::flags::get(*msg);
 				auto msg_data = *msg + spec_defs::message_header_v2_spec::size;
 
 				cout << "found message <@" << static_cast<void*>(msg_data)
-						<< " type = 0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(type) << std::hex
+						<< " type=0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(type) << std::hex
 						<< " size=" << spec_defs::message_header_v2_spec::size_of_message::get(*msg)
-						<< " flags=" << std::hex << static_cast<int>(spec_defs::message_header_v2_spec::flags::get(*msg)) << ">" << endl;
+						<< " flags=0b" << std::bitset<8>(flags) << ">" << endl;
 
-				if (type == MSG_OBJECT_HEADER_CONTINUATION) {
-					message_block_queue.push_back(message_block_v2(header_size, *file, msg_data));
+				if (flags&0x0000'0010u) {
+					// is shared message.
+
+					// FIXME: currently expect that MSG_OBJECT_HEADER_CONTINUATION cannot be shared
+					parse_shared(type, msg_data);
+
 				} else {
-					dispatch_message(type, msg_data);
+					if (type == MSG_OBJECT_HEADER_CONTINUATION) {
+						message_block_queue.push_back(message_block_v2(header_size, *file, msg_data));
+					} else {
+						dispatch_message(type, msg_data);
+					}
 				}
 			}
 			message_block_queue.pop_front();
