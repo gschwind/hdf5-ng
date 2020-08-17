@@ -381,6 +381,19 @@ struct message_link_spec : public type_spec {
 	enum : uint64_t { size = last<flags>::size };
 };
 
+// Layout: Group Info Message #0x0006
+struct message_group_info_spec : public type_spec {
+	using version                    = spec<uint8_t,     none>; // should match datatype size_of_elements
+	using flags                      = spec<uint8_t,  version>;
+	// Variable:
+	// Link Phase Change: Maximum Compact Value 2 bytes (optional, present if flags bit 0 is set)
+	// Link Phase Change: Minimum Dense Value 2 bytes (optional, present if flags bit 0 is set)
+	// Estimated Number of Entries 2 bytes (optional,  present if flags bit 1 is set)
+	// Estimated Link Name Length of Entries (optional,  present if flags bit 1 is set)
+
+	enum : uint64_t { size = last<flags>::size };
+};
+
 // Layout: Modification Time Message
 struct message_object_modification_time_spec : public type_spec {
 	using version                    = spec<uint8_t,     none>; // should match datatype size_of_elements

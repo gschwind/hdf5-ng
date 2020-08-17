@@ -1697,6 +1697,45 @@ struct object_commom : public object
 
 	}
 
+
+	void parse_group_info(uint8_t * msg)
+	{
+		uint8_t version = spec_defs::message_link_spec::version::get(msg);
+		if (version != 0) {
+			throw EXCEPTION("Unknown Group Info version");
+		}
+
+		uint8_t flags = spec_defs::message_link_info_spec::flags::get(msg);
+
+		uint64_t offset = spec_defs::message_link_info_spec::size;
+
+		uint16_t maximum_compact_value = 0xffffu;
+		uint16_t minimum_dense_value = 0xffffu;
+		if (flags & 0b0000'0001u) {
+			maximum_compact_value = read_at<uint16_t>(&msg[offset]);
+			offset += 2;
+			minimum_dense_value = read_at<uint16_t>(&msg[offset]);
+			offset += 2;
+		}
+
+		uint16_t estimated_number_of_entry = 0xffffu;
+		uint16_t estimated_link_name_length_entry = 0xffffu;
+		if (flags & 0b0000'0010u) {
+			estimated_number_of_entry = read_at<uint16_t>(&msg[offset]);
+			offset += 2;
+			estimated_link_name_length_entry = read_at<uint16_t>(&msg[offset]);
+			offset += 2;
+		}
+
+		cout << "parse_global_info" << endl;
+		cout << "flags = " << std::hex << flags << std::dec << endl;
+		cout << "maximum_compact_value = " << maximum_compact_value << endl;
+		cout << "minimum_dense_value = " << minimum_dense_value << endl;
+		cout << "estimated_number_of_entry = " << estimated_number_of_entry << endl;
+		cout << "estimated_link_name_length_entry = " << estimated_link_name_length_entry << endl;
+
+	}
+
 	object_commom(file_impl * file, uint8_t * addr) : object{file, addr}
 	{
 		symbol_table.group_btree_v1_root = undef_offset;
@@ -1739,6 +1778,7 @@ struct object_commom : public object
 		case MSG_BOGUS:
 			break;
 		case MSG_GROUP_INFO:
+			parse_group_info(data);
 			break;
 		case MSG_DATA_STORAGE_FILTER_PIPELINE:
 			break;
