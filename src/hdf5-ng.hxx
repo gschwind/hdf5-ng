@@ -113,6 +113,21 @@ uint64_t align_forward(uint64_t ptr)
 	return ((ptr-1)&~mask)+alignement;
 }
 
+template<typename T>
+ostream& operator<<(ostream &o, vector<T> const &v)
+{
+	o << "[";
+	if (v.size() > 0) {
+		for (unsigned i = 0; i < v.size() - 1; ++i) {
+			o << std::dec << v[i] << ",";
+		}
+		o << std::dec << v.back();
+	}
+	o << "]";
+	return o;
+
+}
+
 struct addr_reader {
 	uint8_t * cur;
 	addr_reader(uint8_t * cur) : cur{cur} { }
@@ -640,7 +655,7 @@ using offset_type = typename get_type_for_size<SIZE_OF_OFFSET>::type;
 using length_type = typename get_type_for_size<SIZE_OF_LENGTH>::type;
 
 static offset_type constexpr undef_offset = std::numeric_limits<offset_type>::max();
-static offset_type constexpr undef_length = std::numeric_limits<length_type>::max();
+static length_type constexpr undef_length = std::numeric_limits<length_type>::max();
 
 
 static uint64_t get_minimum_storage_size_for(uint64_t count) {
@@ -1609,9 +1624,19 @@ struct object_dataspace_t {
 
 	}
 
+	friend ostream & operator<<(ostream & o,  object_dataspace_t const & dataspace)
+	{
+		cout << "dataspace.rank = " << static_cast<int>(dataspace.rank) << endl;
+		cout << "dataspace.shape = " << dataspace.shape << endl;
+		cout << "dataspace.max_shape = " << dataspace.max_shape << endl;
+		cout << "dataspace.permutation = " << dataspace.permutation << endl;
+
+		return o;
+	}
+
 };
 
-struct object_data_layout_t {
+struct object_datalayout_t {
 	file_impl * file;
 
 	uint8_t version;
@@ -1626,10 +1651,10 @@ struct object_data_layout_t {
 	uint8_t layout_class;
 
 	// COMPACT LAYOUT
-	uint8_t           compact_dimensionality;
+	uint8_t           compact_dimensionality;      //< same as dataspace.rank
 	offset_type       compact_data_address;
 	uint32_t          compact_data_size;
-	vector<uint32_t>  compact_shape;
+	vector<uint32_t>  compact_shape;               //< same as dataspace.shape
 
 	// CONTIGUOUS LAYOUT
 	uint8_t           contiguous_dimensionality;   //< same as dataspace.rank
@@ -1639,14 +1664,26 @@ struct object_data_layout_t {
 
 	// CHUNKED LAYOUT
 	uint8_t           chunk_flags;
-	uint8_t           chunk_dimensionality;
-	offset_type       chunk_btree_v1_root;
+	uint8_t           chunk_dimensionality;        //< same as dataspace.rank
 	uint8_t           chunk_indexing_type;
 	vector<uint32_t>  chunk_shape;
-	uint32_t          chunk_size_of_element;
+	uint32_t          chunk_size_of_element;       //< same as datatype.size_of_elements
 
+	enum chunk_indexing_type_e : uint8_t {
+		CHUNK_INDEXING_BTREE_V1          = 0u,
+		CHUNK_INDEXING_SINGLE_CHUNK      = 1u,
+		CHUNK_INDEXING_IMPLICIT          = 2u,
+		CHUNK_INDEXING_FIXED_ARRAY       = 3u,
+		CHUNK_INDEXING_EXTENSIBLE_ARRAY  = 4u,
+		CHUNK_INDEXING_BTREE_V2          = 5u
+	};
 
 	union {
+		// Undef
+		struct {
+			offset_type       data_address;
+		} chunk_btree_v1;
+
 		// Single Chunk data
 		struct {
 			length_type       size_of_filtered_chunk;
@@ -1684,28 +1721,10 @@ struct object_data_layout_t {
 
 	};
 
-
-	enum chunk_indexing_type_e : uint8_t {
-		CHUNK_INDEXING_UNDEF             = 0u, // used for btree_v1
-		CHUNK_INDEXING_SINGLE_CHUNK      = 1u,
-		CHUNK_INDEXING_IMPLICIT          = 2u,
-		CHUNK_INDEXING_FIXED_ARRAY       = 3u,
-		CHUNK_INDEXING_EXTENSIBLE_ARRAY  = 4u,
-		CHUNK_INDEXING_BTREE_V2          = 5u
-	};
-
-	// VIRTUAL LAYOUT
+	// TODO: VIRTUAL LAYOUT
 
 
-
-
-
-
-
-
-
-
-	object_data_layout_t(file_impl * file, uint8_t * msg) : file{file}
+	object_datalayout_t(file_impl * file, uint8_t * msg) : file{file}
 	{
 	//		cout << "parse_datalayout " << std::dec <<
 	//				" version=" << static_cast<unsigned>(spec_defs::message_data_layout_v1_spec::version::get(msg)) <<
@@ -1724,7 +1743,7 @@ struct object_data_layout_t {
 			switch(layout_class) {
 			case LAYOUT_COMPACT: {
 				// in case of compact layout, data are stored within the message.
-				compact_dimensionality = &spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
+				compact_dimensionality = spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
 				auto compact_shape_ptr = reinterpret_cast<uint32_t*>(cur.cur);
 				compact_shape = vector<uint32_t>{&compact_shape_ptr[0], &compact_shape_ptr[compact_dimensionality]};
 				cur.cur += compact_dimensionality*sizeof(uint32_t);
@@ -1733,7 +1752,7 @@ struct object_data_layout_t {
 				break;
 			}
 			case LAYOUT_CONTIGUOUS: {
-				contiguous_dimensionality = &spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
+				contiguous_dimensionality = spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
 				contiguous_data_address = cur.read<offset_type>();
 				auto contiguous_shape_ptr = reinterpret_cast<uint32_t*>(cur.cur);
 				contiguous_shape = vector<uint32_t>{&contiguous_shape_ptr[0], &contiguous_shape_ptr[contiguous_dimensionality]};
@@ -1742,8 +1761,9 @@ struct object_data_layout_t {
 				break;
 			}
 			case LAYOUT_CHUNKED: {
-				chunk_dimensionality = &spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
-				chunk_btree_v1_root = cur.read<offset_type>();
+				chunk_indexing_type = CHUNK_INDEXING_BTREE_V1;
+				chunk_dimensionality = spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
+				chunk_btree_v1.data_address = cur.read<offset_type>();
 				auto chunk_shape_ptr = reinterpret_cast<uint32_t*>(cur.cur);
 				chunk_shape = vector<uint32_t>{&chunk_shape_ptr[0], &chunk_shape_ptr[chunk_dimensionality]};
 				cur.cur += chunk_dimensionality*sizeof(uint32_t);
@@ -1773,8 +1793,9 @@ struct object_data_layout_t {
 				contiguous_data_size = cur.read<length_type>();
 				break;
 			case LAYOUT_CHUNKED: {
+				chunk_indexing_type = CHUNK_INDEXING_BTREE_V1;
 				chunk_dimensionality = cur.read<uint8_t>();
-				chunk_btree_v1_root = cur.read<offset_type>();
+				chunk_btree_v1.data_address = cur.read<offset_type>();
 				auto chunk_shape_ptr = reinterpret_cast<uint32_t*>(cur.cur);
 				chunk_shape = vector<uint32_t>{&chunk_shape_ptr[0], &chunk_shape_ptr[chunk_dimensionality]};
 				cur.cur += chunk_dimensionality*sizeof(uint32_t);
@@ -1860,6 +1881,46 @@ struct object_data_layout_t {
 			throw EXCEPTION("Unexpected layout_class");
 	}
 
+	}
+
+
+	friend ostream & operator<<(ostream & o, object_datalayout_t const & datalayout) {
+		switch(datalayout.layout_class) {
+		case object_datalayout_t::LAYOUT_COMPACT: {
+			cout << "datalayout.layout_class = COMPACT" << endl;
+			cout << "datalayout.compact_dimensionality = " << static_cast<int>(datalayout.compact_dimensionality) << endl;
+			cout << "datalayout.compact_data_address = " << datalayout.compact_data_address << endl;
+			cout << "datalayout.compact_data_size = " << datalayout.compact_data_size << endl;
+			cout << "datalayout.compact_shape = " << datalayout.compact_shape << endl;
+			 break;
+		}
+		case object_datalayout_t::LAYOUT_CONTIGUOUS: {
+			cout << "datalayout.layout_class = CONTIGUOUS" << endl;
+			cout << "datalayout.contiguous_dimensionality = " << static_cast<int>(datalayout.contiguous_dimensionality) << endl;
+			cout << "datalayout.contiguous_data_address = " << datalayout.contiguous_data_address << endl;
+			cout << "datalayout.contiguous_shape = " << datalayout.contiguous_shape << endl;
+			cout << "datalayout.contiguous_data_size = " << datalayout.contiguous_data_size << endl;
+			break;
+		}
+		case object_datalayout_t::LAYOUT_CHUNKED: {
+			cout << "datalayout.layout_class = CHUNKED" << endl;
+			cout << "datalayout.chunk_flags = " << static_cast<int>(datalayout.chunk_flags) << endl;
+			cout << "datalayout.chunk_dimensionality = " << static_cast<int>(datalayout.chunk_dimensionality) << endl;
+			cout << "datalayout.chunk_indexing_type = " << static_cast<int>(datalayout.chunk_indexing_type) << endl;
+			cout << "datalayout.chunk_shape = " << datalayout.chunk_shape << endl;
+			cout << "datalayout.chunk_size_of_element = " << datalayout.chunk_size_of_element << endl;
+			break;
+		}
+		case object_datalayout_t::LAYOUT_VIRTUAL: {
+			cout << "datalayout.layout_class = VIRTUAL" << endl;
+			break;
+		}
+		default:
+			cout << "datalayout.layout_class = UNSUPPORTED" << endl;
+			break;
+		}
+
+		return o;
 	}
 
 };
@@ -2574,79 +2635,15 @@ struct object_v1 : public object_commom {
 			auto msg = *i;
 
 			switch(msg.type) {
-			case MSG_DATASPACE: {
-				auto dataspace = object_dataspace_t{msg.data};
-
-				cout << "dataspace.rank = " << static_cast<int>(dataspace.rank) << endl;
-
-				cout << "dataspace.shape= {";
-				for(unsigned i = 0; i < dataspace.rank-1; ++i) {
-					cout << std::dec << dataspace.shape[i] << ",";
-				}
-				cout << std::dec << dataspace.shape[dataspace.rank-1] << "}" << endl;
-
-				cout << "dataspace.max_shape= {";
-				for(unsigned i = 0; i < dataspace.rank-1; ++i) {
-					cout << std::dec << dataspace.max_shape[i] << ",";
-				}
-				cout << std::dec << dataspace.max_shape[dataspace.rank-1] << "}" << endl;
-
-
-				cout << "dataspace.permutation= {";
-				for(unsigned i = 0; i < dataspace.rank-1; ++i) {
-					cout << std::dec << dataspace.max_shape[i] << ",";
-				}
-				cout << std::dec << dataspace.max_shape[dataspace.rank-1] << "}" << endl;
-
+			case MSG_DATASPACE:
+				cout << object_dataspace_t{msg.data};
+				break;
+			case MSG_DATA_LAYOUT:
+				cout << object_datalayout_t{file, msg.data};
+				break;
 			}
-			case MSG_DATA_LAYOUT: {
-				// TODO
-			}
-			}
-
 
 		}
-//
-//		if(dataspace.rank) {
-
-//			if (datatype.size_of_elements) {
-//				cout << "size_of_elements= " << static_cast<unsigned>(*datatype.size_of_elements) << endl;
-//			}
-//
-//			if (fillvalue.value) {
-//				cout << "has_fillvalue" << endl;
-//			} else {
-//				cout << "do not has fillvalue" << endl;
-//			}
-
-//			if (_shape_of_chunk) {
-//				cout << "dimensionality=" << static_cast<unsigned>(*dimensionality) << endl;
-//				cout << "shape_of_chunk= {";
-//				for(unsigned i = 0; i < *dimensionality-1; ++i) {
-//					cout << _shape_of_chunk[i] << ",";
-//				}
-//				cout << _shape_of_chunk[*dimensionality-1] << "}" << endl;
-//			}
-
-//			if (datalayout.layout_class == 0) {
-//				cout << "compact layout" << endl;
-//				cout << "size of compact data =" << datalayout.compact_data_size << endl;
-//				cout << "dataset address =" << datalayout.data_address << endl;
-//			} else if (datalayout.layout_class == 1) {
-//				cout << "continuous layout" << endl;
-//				cout << "dataset address = " << datalayout.data_address << endl;
-//			} else if (datalayout.layout_class == 2) {
-//				cout << "chunked layout (btree-v1)" << endl;
-//				cout << "dataset address = " << datalayout.data_address << endl;
-//			}
-//		}
-
-//		auto attributes = list_attributes();
-//
-//		cout << "Attributes:" << endl;
-//		for (auto a: attributes) {
-//			cout << a << endl;
-//		}
 
 	}
 
@@ -2863,74 +2860,21 @@ struct object_v2 : public object_commom {
 		return h5obj{file->make_object(offset)};
 	}
 
-	virtual void print_info() const override {
-//		cerr << "XXXXXXXXXXXXXXXX" << endl;
-//		if(dataspace.rank) {
-//			cout << std::dec;
-//			cout << "rank = " << static_cast<unsigned>(*dataspace.rank) << endl;
-//
-//			if (dataspace._shape) {
-//				cout << "shape= {";
-//				for(unsigned i = 0; i < *dataspace.rank-1; ++i) {
-//					cout << dataspace._shape[i] << ",";
-//				}
-//				cout << dataspace._shape[*dataspace.rank-1] << "}" << endl;
-//			}
-//
-//			if (dataspace.max_shape) {
-//				cout << "max_shape= {";
-//				for(unsigned i = 0; i < *dataspace.rank-1; ++i) {
-//					cout << dataspace.max_shape[i] << ",";
-//				}
-//				cout << dataspace.max_shape[*dataspace.rank-1] << "}" << endl;
-//			}
-//
-//			if (dataspace.permutation) {
-//				cout << "permutation= {";
-//				for(unsigned i = 0; i < *dataspace.rank-1; ++i) {
-//					cout << dataspace.max_shape[i] << ",";
-//				}
-//				cout << dataspace.max_shape[*dataspace.rank-1] << "}" << endl;
-//			}
-//
-//			if (datatype.size_of_elements) {
-//				cout << "size_of_elements= " << static_cast<unsigned>(*datatype.size_of_elements) << endl;
-//			}
-//
-//			if (fillvalue.value) {
-//				cout << "has_fillvalue" << endl;
-//			} else {
-//				cout << "do not has fillvalue" << endl;
-//			}
-//
-////			if (_shape_of_chunk) {
-////				cout << "dimensionality=" << static_cast<unsigned>(*dimensionality) << endl;
-////				cout << "shape_of_chunk= {";
-////				for(unsigned i = 0; i < *dimensionality-1; ++i) {
-////					cout << _shape_of_chunk[i] << ",";
-////				}
-////				cout << _shape_of_chunk[*dimensionality-1] << "}" << endl;
-////			}
-//
-//			if (datalayout.layout_class == 0) {
-//				cout << "compact layout" << endl;
-//				cout << "size of compact data =" << datalayout.compact_data_size << endl;
-//				cout << "dataset address =" << datalayout.data_address << endl;
-//			} else if (datalayout.layout_class == 1) {
-//				cout << "continuous layout" << endl;
-//				cout << "dataset address = " << datalayout.data_address << endl;
-//			} else if (datalayout.layout_class == 2) {
-//				cout << "chunked layout (btree-v1)" << endl;
-//				cout << "dataset address = " << datalayout.data_address << endl;
-//			}
-//		}
-//
-////		auto attributes = list_attributes();
-////
-////		cout << "Attributes:" << endl;
-////		for (auto a: attributes) {
-////			cout << a << endl;
-////		}
+	virtual void print_info() const override
+	{
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+
+			switch(msg.type) {
+			case MSG_DATASPACE:
+				cout << object_dataspace_t{msg.data};
+				break;
+			case MSG_DATA_LAYOUT:
+				cout << object_datalayout_t{file, msg.data};
+				break;
+			}
+
+		}
 
 	}
 
