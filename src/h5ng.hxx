@@ -77,7 +77,7 @@ struct _h5obj {
 	virtual auto operator[](string const & name) const -> h5obj = 0;
 	virtual auto shape() const -> vector<size_t> = 0;
 	virtual auto shape(int i) const -> size_t = 0;
-	virtual auto keys() const -> vector<char const *> = 0;
+	virtual auto keys() const -> vector<string> = 0;
 	virtual auto list_attributes() const -> vector<char const *> = 0;
 
 	virtual auto modification_time() const -> uint32_t = 0;
@@ -106,7 +106,7 @@ public:
 		return obj.get_id() == get_id();
 	}
 
-	vector<char const *> keys() {
+	vector<string> keys() {
 		return _ptr->keys();
 	}
 

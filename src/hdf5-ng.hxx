@@ -304,7 +304,7 @@ struct object : public file_object, public _h5obj {
 		throw EXCEPTION("Not implemented");
 	}
 
-	virtual auto keys() const -> vector<char const *> override {
+	virtual auto keys() const -> vector<string> override {
 		throw EXCEPTION("Not implemented");
 	}
 
@@ -1971,26 +1971,6 @@ struct object_v1 : public object_commom {
 
 	using object_commom::dispatch_message;
 
-//	struct message_block_v1 : public object_commom::message_block_t {
-//
-//		message_block_v1(uint8_t * cur, uint64_t length) : object_commom::message_block_t{cur, length} { }
-//		message_block_v1(uint8_t * cur, uint8_t * end) : object_commom::message_block_t{cur, end} { }
-//		message_block_v1(file_impl & file, uint8_t * msg) :
-//			message_block_v1{
-//				file.to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg)),
-//				spec_defs::message_object_header_continuation_spec::length::get(msg)}
-//		{
-//
-//		}
-//
-//		message_block_v1 & operator++() {
-//			object_commom::message_block_t::_cur += spec_defs::message_header_v1_spec::size
-//					+ spec_defs::message_header_v1_spec::size_of_message::get(object_commom::message_block_t::_cur);
-//			return *this;
-//		}
-//
-//	};
-
 	struct message_iterator_t {
 		// TODO: check if message go out of block boundary.
 		file_impl * file;
@@ -2274,39 +2254,105 @@ struct object_v1 : public object_commom {
 
 	}
 
-	virtual auto keys() const -> vector<char const *> override {
+	virtual auto keys() const -> vector<string> override {
 
-		if(symbol_table.group_btree_v1_root == undef_offset)
-			return vector<char const *>{};
+		vector<string> ret;
 
-		vector<char const *> ret;
-		stack<group_btree_v1> stack;
-
-		vector<offset_type> group_symbole_tables;
-		cout << "btree-root = " << std::hex << symbol_table.group_btree_v1_root << std::dec << endl;
-		stack.push(group_btree_v1{file, file->to_address(symbol_table.group_btree_v1_root)});
-		while(not stack.empty()) {
-			group_btree_v1 cur = stack.top();
-			cout << std::dec << "process node depth=" << cur.get_depth() << " entries_count=" << cur.get_entries_count() << endl;
-			stack.pop();
-			if (cur.get_depth() == 0) {
-				//assert(cur.get_entries_count() <= lK);
-				for(int i = 0; i < cur.get_entries_count(); ++i) {
-					group_symbole_tables.push_back(cur.get_node(i));
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			if (msg.type == MSG_LINK) {
+				uint8_t version = spec_defs::message_link_spec::version::get(msg.data);
+				if (version != 1) {
+					throw EXCEPTION("Unknown Link Info version");
 				}
-			} else {
-				//assert(cur.get_entries_count() <= nK);
-				for(int i = 0; i < cur.get_entries_count(); ++i) {
-					stack.push(group_btree_v1{file, file->to_address(cur.get_node(i))});
+
+				auto flags = make_bitset(spec_defs::message_link_info_spec::flags::get(msg.data));
+
+				auto cur = addr_reader{msg.data+spec_defs::message_link_info_spec::size};
+
+				uint8_t type = 0u;
+				if (flags.test(3)) {
+					cur.read(type);
+				}
+
+				uint64_t creation_order = 0xffff'ffff'ffff'ffffu;
+				if (flags.test(2)) {
+					cur.read(creation_order);
+				}
+
+				// default to zero.
+				uint8_t charset = 0x00u;
+				if (flags.test(4)) {
+					cout << "has charset" << endl;
+					cur.read(charset);
+				}
+
+				uint64_t size_of_length_of_name = 1u<<(flags.to_ulong()&0x0000'0011u);
+				uint64_t length_of_name = cur.reads(size_of_length_of_name);
+
+				string link_name;
+				{
+					vector<uint8_t> link_name_s{&cur.cur[0], &cur.cur[length_of_name]};
+					link_name_s.push_back(0u);
+					link_name = string{link_name_s.begin(), link_name_s.end()};
+					cur.cur += length_of_name;
+				}
+
+				// TODO: Link information.
+				cout << "parse_link" << endl;
+				cout << "flags = " << flags << endl;
+				cout << "type = " << static_cast<int>(type) << endl;
+				cout << "creation_order = " << creation_order << endl;
+				cout << "charset = " << (charset?"UTF-8":"ASCII") << endl;
+				cout << "size_of_length_of_name = " << size_of_length_of_name << endl;
+				cout << "length_of_name = " << length_of_name << endl;
+				cout << "name = " << link_name << endl;
+
+				ret.push_back(link_name);
+
+				switch (type) {
+				case 0: { // Hard link
+					uint64_t object_addr = cur.read<uint64_t>();
+					cout << "hardlink address = " << object_addr << endl;
+					break;
+				}
+				default:
+					throw EXCEPTION("Unhandled link type");
 				}
 			}
 		}
 
-		for(auto offset: group_symbole_tables) {
-			group_symbol_table table{file->to_address(offset)};
-			for(auto symbol_table_entry: table.get_symbole_entry_list()) {
-				ret.push_back(_get_link_name(symbol_table_entry->link_name_offset()));
+		if(symbol_table.group_btree_v1_root != undef_offset) {
+
+			stack<group_btree_v1> stack;
+
+			vector<offset_type> group_symbole_tables;
+			cout << "btree-root = " << std::hex << symbol_table.group_btree_v1_root << std::dec << endl;
+			stack.push(group_btree_v1{file, file->to_address(symbol_table.group_btree_v1_root)});
+			while(not stack.empty()) {
+				group_btree_v1 cur = stack.top();
+				cout << std::dec << "process node depth=" << cur.get_depth() << " entries_count=" << cur.get_entries_count() << endl;
+				stack.pop();
+				if (cur.get_depth() == 0) {
+					//assert(cur.get_entries_count() <= lK);
+					for(int i = 0; i < cur.get_entries_count(); ++i) {
+						group_symbole_tables.push_back(cur.get_node(i));
+					}
+				} else {
+					//assert(cur.get_entries_count() <= nK);
+					for(int i = 0; i < cur.get_entries_count(); ++i) {
+						stack.push(group_btree_v1{file, file->to_address(cur.get_node(i))});
+					}
+				}
 			}
+
+			for(auto offset: group_symbole_tables) {
+				group_symbol_table table{file->to_address(offset)};
+				for(auto symbol_table_entry: table.get_symbole_entry_list()) {
+					ret.push_back(_get_link_name(symbol_table_entry->link_name_offset()));
+				}
+			}
+
 		}
 
 		return ret;
@@ -2443,46 +2489,6 @@ struct object_v2 : public object_commom {
 	using object_commom::parse_shared;
 	using object_commom::xparse_shared;
 
-
-//	struct message_block_v2 {
-//		uint64_t _header_size;
-//		uint8_t * _cur;
-//		uint8_t * _end;
-//
-//
-//		message_block_v2(message_block_t const &) = default;
-//		message_block_v2 & operator=(message_block_t const &) = default;
-//
-//		message_block_v2(uint64_t header_size, uint8_t * cur, uint64_t length) : _cur{cur}, _end{length}, _header_size{header_size} { }
-//		message_block_v2(uint64_t header_size, uint8_t * cur, uint8_t * end) : _cur{cur}, _end{end}, _header_size{header_size} { }
-//		message_block_v2(uint64_t header_size, file_impl & file, uint8_t * msg) :
-//			message_block_v2{header_size,
-//				file.to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg)),
-//				spec_defs::message_object_header_continuation_spec::length::get(msg)}
-//		{
-//
-//		}
-//
-//		message_handler_t operator*() const
-//		{
-//			message_block_v2{header_size,
-//				file.to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg)),
-//				spec_defs::message_object_header_continuation_spec::length::get(msg)}
-//			return _cur;
-//		}
-//
-//		bool end() const
-//		{
-//			return _cur > _end;
-//		}
-//
-//		message_block_v2 & operator++() {
-//			object_commom::message_block_t::_cur += _header_size + spec_defs::message_header_v2_spec::size_of_message::get(object_commom::message_block_t::_cur);
-//			return *this;
-//		}
-//
-//	};
-
 	object_v2(file_impl * file, uint8_t * addr) : object_commom{file, addr} {
 		cout << "creating object v2, object cache size = TODO" << endl;
 		parse_messages();
@@ -2617,47 +2623,115 @@ struct object_v2 : public object_commom {
 		}
 	}
 
-//	virtual auto keys() const -> vector<char const *> override
-//	{
-//
-//		// TODO: go throught all messages.
-//
-//		if(symbol_table.group_btree_v1_root == undef_offset)
-//			return vector<char const *>{};
-//
-//		vector<char const *> ret;
-//		stack<group_btree_v1> stack;
-//
-//		vector<offset_type> group_symbole_tables;
-//		cout << "btree-root = " << std::hex << symbol_table.group_btree_v1_root << std::dec << endl;
-//		stack.push(group_btree_v1{file, file->to_address(symbol_table.group_btree_v1_root)});
-//		while(not stack.empty()) {
-//			group_btree_v1 cur = stack.top();
-//			cout << std::dec << "process node depth=" << cur.get_depth() << " entries_count=" << cur.get_entries_count() << endl;
-//			stack.pop();
-//			if (cur.get_depth() == 0) {
-//				//assert(cur.get_entries_count() <= lK);
-//				for(int i = 0; i < cur.get_entries_count(); ++i) {
-//					group_symbole_tables.push_back(cur.get_node(i));
-//				}
-//			} else {
-//				//assert(cur.get_entries_count() <= nK);
-//				for(int i = 0; i < cur.get_entries_count(); ++i) {
-//					stack.push(group_btree_v1{file, file->to_address(cur.get_node(i))});
-//				}
-//			}
-//		}
-//
-//		for(auto offset: group_symbole_tables) {
-//			group_symbol_table table{file->to_address(offset)};
-//			for(auto symbol_table_entry: table.get_symbole_entry_list()) {
-//				ret.push_back(_get_link_name(symbol_table_entry->link_name_offset()));
-//			}
-//		}
-//
-//		return ret;
-//
-//	}
+	virtual auto keys() const -> vector<string> override
+	{
+		vector<string> ret;
+
+		// TODO: go throught all messages.
+
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			if (msg.type == MSG_LINK) {
+				uint8_t version = spec_defs::message_link_spec::version::get(msg.data);
+				if (version != 1) {
+					throw EXCEPTION("Unknown Link Info version");
+				}
+
+				auto flags = make_bitset(spec_defs::message_link_info_spec::flags::get(msg.data));
+
+				auto cur = addr_reader{msg.data+spec_defs::message_link_info_spec::size};
+
+				uint8_t type = 0u;
+				if (flags.test(3)) {
+					cur.read(type);
+				}
+
+				uint64_t creation_order = 0xffff'ffff'ffff'ffffu;
+				if (flags.test(2)) {
+					cur.read(creation_order);
+				}
+
+				// default to zero.
+				uint8_t charset = 0x00u;
+				if (flags.test(4)) {
+					cout << "has charset" << endl;
+					cur.read(charset);
+				}
+
+				uint64_t size_of_length_of_name = 1u<<(flags.to_ulong()&0x0000'0011u);
+				uint64_t length_of_name = cur.reads(size_of_length_of_name);
+
+				string link_name;
+				{
+					vector<uint8_t> link_name_s{&cur.cur[0], &cur.cur[length_of_name]};
+					link_name_s.push_back(0u);
+					link_name = string{link_name_s.begin(), link_name_s.end()};
+					cur.cur += length_of_name;
+				}
+
+				// TODO: Link information.
+				cout << "parse_link" << endl;
+				cout << "flags = " << flags << endl;
+				cout << "type = " << static_cast<int>(type) << endl;
+				cout << "creation_order = " << creation_order << endl;
+				cout << "charset = " << (charset?"UTF-8":"ASCII") << endl;
+				cout << "size_of_length_of_name = " << size_of_length_of_name << endl;
+				cout << "length_of_name = " << length_of_name << endl;
+				cout << "name = " << link_name << endl;
+
+				ret.push_back(link_name);
+
+				switch (type) {
+				case 0: { // Hard link
+					uint64_t object_addr = cur.read<uint64_t>();
+					cout << "hardlink address = " << object_addr << endl;
+					break;
+				}
+				default:
+					throw EXCEPTION("Unhandled link type");
+				}
+			}
+		}
+
+		if (symbol_table.group_btree_v1_root != undef_offset) {
+
+			stack<group_btree_v1> stack;
+
+			vector<offset_type> group_symbole_tables;
+			cout << "btree-root = " << std::hex << symbol_table.group_btree_v1_root << std::dec << endl;
+			stack.push(group_btree_v1{file, file->to_address(symbol_table.group_btree_v1_root)});
+			while(not stack.empty()) {
+				group_btree_v1 cur = stack.top();
+				cout << std::dec << "process node depth=" << cur.get_depth() << " entries_count=" << cur.get_entries_count() << endl;
+				stack.pop();
+				if (cur.get_depth() == 0) {
+					//assert(cur.get_entries_count() <= lK);
+					for(int i = 0; i < cur.get_entries_count(); ++i) {
+						group_symbole_tables.push_back(cur.get_node(i));
+					}
+				} else {
+					//assert(cur.get_entries_count() <= nK);
+					for(int i = 0; i < cur.get_entries_count(); ++i) {
+						stack.push(group_btree_v1{file, file->to_address(cur.get_node(i))});
+					}
+				}
+			}
+
+			for(auto offset: group_symbole_tables) {
+				group_symbol_table table{file->to_address(offset)};
+				for(auto symbol_table_entry: table.get_symbole_entry_list()) {
+					ret.push_back(_get_link_name(symbol_table_entry->link_name_offset()));
+				}
+			}
+		}
+
+		return ret;
+
+	}
+
+	char const * _get_link_name(uint64_t offset) const {
+		return reinterpret_cast<char *>(symbol_table.lheap->get_data(offset));
+	}
 
 	uint8_t get_size_of_size_of_chunk() const {
 		return 1<<(0b0000'0011u&spec::flags::get(memory_addr));
@@ -3046,7 +3120,7 @@ struct _h5file : public _h5obj {
 	}
 
 
-	virtual auto keys() const -> vector<char const *> override
+	virtual auto keys() const -> vector<string> override
 	{
 		return _root_object->keys();
 	}
