@@ -1626,10 +1626,10 @@ struct object_dataspace_t {
 
 	friend ostream & operator<<(ostream & o,  object_dataspace_t const & dataspace)
 	{
-		cout << "dataspace.rank = " << static_cast<int>(dataspace.rank) << endl;
-		cout << "dataspace.shape = " << dataspace.shape << endl;
-		cout << "dataspace.max_shape = " << dataspace.max_shape << endl;
-		cout << "dataspace.permutation = " << dataspace.permutation << endl;
+		o << "dataspace.rank = " << static_cast<int>(dataspace.rank) << endl;
+		o << "dataspace.shape = " << dataspace.shape << endl;
+		o << "dataspace.max_shape = " << dataspace.max_shape << endl;
+		o << "dataspace.permutation = " << dataspace.permutation << endl;
 
 		return o;
 	}
@@ -1651,20 +1651,20 @@ struct object_datalayout_t {
 	uint8_t layout_class;
 
 	// COMPACT LAYOUT
-	uint8_t           compact_dimensionality;      //< same as dataspace.rank
+	uint8_t           compact_dimensionality;      //< same as dataspace.rank+1
 	offset_type       compact_data_address;
 	uint32_t          compact_data_size;
 	vector<uint32_t>  compact_shape;               //< same as dataspace.shape
 
 	// CONTIGUOUS LAYOUT
-	uint8_t           contiguous_dimensionality;   //< same as dataspace.rank
+	uint8_t           contiguous_dimensionality;   //< same as dataspace.rank+1
 	offset_type       contiguous_data_address;
 	vector<uint32_t>  contiguous_shape;            //< same as dataspace.shape
 	length_type       contiguous_data_size;
 
 	// CHUNKED LAYOUT
 	uint8_t           chunk_flags;
-	uint8_t           chunk_dimensionality;        //< same as dataspace.rank
+	uint8_t           chunk_dimensionality;        //< same as dataspace.rank+1
 	uint8_t           chunk_indexing_type;
 	vector<uint32_t>  chunk_shape;
 	uint32_t          chunk_size_of_element;       //< same as datatype.size_of_elements
@@ -1840,7 +1840,6 @@ struct object_datalayout_t {
 				uint64_t size_of_index_data = 0;
 				switch(chunk_indexing_type) {
 				case CHUNK_INDEXING_SINGLE_CHUNK:
-					cur.cur += sizeof(length_type) + sizeof(uint32_t);
 					chunk_single_chunk.size_of_filtered_chunk = cur.read<length_type>();
 					chunk_single_chunk.filters = cur.read<uint32_t>();
 					chunk_single_chunk.data_address = cur.read<offset_type>();
@@ -1884,39 +1883,82 @@ struct object_datalayout_t {
 	}
 
 
-	friend ostream & operator<<(ostream & o, object_datalayout_t const & datalayout) {
+	friend ostream & operator<<(ostream & o, object_datalayout_t const & datalayout)
+	{
+		o << "datalayout.version = " << static_cast<int>(datalayout.version) << endl;
+
 		switch(datalayout.layout_class) {
 		case object_datalayout_t::LAYOUT_COMPACT: {
-			cout << "datalayout.layout_class = COMPACT" << endl;
-			cout << "datalayout.compact_dimensionality = " << static_cast<int>(datalayout.compact_dimensionality) << endl;
-			cout << "datalayout.compact_data_address = " << datalayout.compact_data_address << endl;
-			cout << "datalayout.compact_data_size = " << datalayout.compact_data_size << endl;
-			cout << "datalayout.compact_shape = " << datalayout.compact_shape << endl;
+			o << "datalayout.layout_class = COMPACT" << endl;
+			o << "datalayout.compact_dimensionality = " << static_cast<int>(datalayout.compact_dimensionality) << endl;
+			o << "datalayout.compact_data_address = " << datalayout.compact_data_address << endl;
+			o << "datalayout.compact_data_size = " << datalayout.compact_data_size << endl;
+			o << "datalayout.compact_shape = " << datalayout.compact_shape << endl;
 			 break;
 		}
 		case object_datalayout_t::LAYOUT_CONTIGUOUS: {
-			cout << "datalayout.layout_class = CONTIGUOUS" << endl;
-			cout << "datalayout.contiguous_dimensionality = " << static_cast<int>(datalayout.contiguous_dimensionality) << endl;
-			cout << "datalayout.contiguous_data_address = " << datalayout.contiguous_data_address << endl;
-			cout << "datalayout.contiguous_shape = " << datalayout.contiguous_shape << endl;
-			cout << "datalayout.contiguous_data_size = " << datalayout.contiguous_data_size << endl;
+			o << "datalayout.layout_class = CONTIGUOUS" << endl;
+			o << "datalayout.contiguous_dimensionality = " << static_cast<int>(datalayout.contiguous_dimensionality) << endl;
+			o << "datalayout.contiguous_data_address = " << datalayout.contiguous_data_address << endl;
+			o << "datalayout.contiguous_shape = " << datalayout.contiguous_shape << endl;
+			o << "datalayout.contiguous_data_size = " << datalayout.contiguous_data_size << endl;
 			break;
 		}
 		case object_datalayout_t::LAYOUT_CHUNKED: {
-			cout << "datalayout.layout_class = CHUNKED" << endl;
-			cout << "datalayout.chunk_flags = " << static_cast<int>(datalayout.chunk_flags) << endl;
-			cout << "datalayout.chunk_dimensionality = " << static_cast<int>(datalayout.chunk_dimensionality) << endl;
-			cout << "datalayout.chunk_indexing_type = " << static_cast<int>(datalayout.chunk_indexing_type) << endl;
-			cout << "datalayout.chunk_shape = " << datalayout.chunk_shape << endl;
-			cout << "datalayout.chunk_size_of_element = " << datalayout.chunk_size_of_element << endl;
+			o << "datalayout.layout_class = CHUNKED" << endl;
+			o << "datalayout.chunk_flags = " << static_cast<int>(datalayout.chunk_flags) << endl;
+			o << "datalayout.chunk_dimensionality = " << static_cast<int>(datalayout.chunk_dimensionality) << endl;
+			o << "datalayout.chunk_shape = " << datalayout.chunk_shape << endl;
+			o << "datalayout.chunk_size_of_element = " << datalayout.chunk_size_of_element << endl;
+
+			switch (datalayout.chunk_indexing_type) {
+				case CHUNK_INDEXING_BTREE_V1:
+					o << "datalayout.chunk_indexing_type = BTREE_V1" << endl;
+					o << "datalayout.chunk_btree_v1.data_address =" << datalayout.chunk_btree_v1.data_address << endl;
+					break;
+				case CHUNK_INDEXING_SINGLE_CHUNK:
+					o << "datalayout.chunk_indexing_type = SINGLE_CHUNK" << endl;
+					o << "datalayout.chunk_single_chunk.size_of_filtered_chunk = " << datalayout.chunk_single_chunk.size_of_filtered_chunk << endl;
+					o << "datalayout.chunk_single_chunk.filters = " << datalayout.chunk_single_chunk.filters << endl;
+					o << "datalayout.chunk_single_chunk.data_address = " << datalayout.chunk_single_chunk.data_address << endl;
+					break;
+				case CHUNK_INDEXING_IMPLICIT:
+					o << "datalayout.chunk_indexing_type = IMPLICIT" << endl;
+					o << "datalayout.chunk_implicit.data_address = " << datalayout.chunk_implicit.data_address << endl;
+					break;
+				case CHUNK_INDEXING_FIXED_ARRAY:
+					o << "datalayout.chunk_indexing_type = FIXED_ARRAY" << endl;
+					o << "datalayout.chunk_fixed_array.page_bits = " << datalayout.chunk_fixed_array.page_bits << endl;
+					o << "datalayout.chunk_fixed_array.data_address = " << datalayout.chunk_fixed_array.data_address << endl;
+					break;
+				case CHUNK_INDEXING_EXTENSIBLE_ARRAY:
+					o << "datalayout.chunk_indexing_type = EXTENSIBLE_ARRAY" << endl;
+					o << "datalayout.chunk_extensible_array.max_bits = " << datalayout.chunk_extensible_array.max_bits << endl;
+					o << "datalayout.chunk_extensible_array.index_elements = " << datalayout.chunk_extensible_array.index_elements << endl;
+					o << "datalayout.chunk_extensible_array.min_elements = " << datalayout.chunk_extensible_array.min_elements << endl;
+					o << "datalayout.chunk_extensible_array.min_pointers = " << datalayout.chunk_extensible_array.min_pointers << endl;
+					o << "datalayout.chunk_extensible_array.page_bits = " << datalayout.chunk_extensible_array.page_bits << endl;
+					break;
+				case CHUNK_INDEXING_BTREE_V2:
+					o << "datalayout.chunk_indexing_type = BTREE_V2" << endl;
+					o << "datalayout.chunk_btree_v2.node_size = " << datalayout.chunk_btree_v2.node_size << endl;
+					o << "datalayout.chunk_btree_v2.split_percent = " << datalayout.chunk_btree_v2.split_percent << endl;
+					o << "datalayout.chunk_btree_v2.merge_percent = " << datalayout.chunk_btree_v2.merge_percent << endl;
+					o << "datalayout.chunk_btree_v2.data_address = " << datalayout.chunk_btree_v2.data_address << endl;
+					break;
+				default:
+					o << "datalayout.chunk_indexing_type = UNSUPPORTED" << endl;
+					break;
+			}
+
 			break;
 		}
 		case object_datalayout_t::LAYOUT_VIRTUAL: {
-			cout << "datalayout.layout_class = VIRTUAL" << endl;
+			o << "datalayout.layout_class = VIRTUAL" << endl;
 			break;
 		}
 		default:
-			cout << "datalayout.layout_class = UNSUPPORTED" << endl;
+			o << "datalayout.layout_class = UNSUPPORTED" << endl;
 			break;
 		}
 
