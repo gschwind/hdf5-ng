@@ -308,7 +308,7 @@ struct object : public file_object, public _h5obj {
 		throw EXCEPTION("Not implemented");
 	}
 
-	virtual auto list_attributes() const -> vector<char const *> override {
+	virtual auto list_attributes() const -> vector<string> override {
 		throw EXCEPTION("Not implemented");
 	}
 
@@ -2359,22 +2359,23 @@ struct object_v1 : public object_commom {
 
 	}
 
-	virtual auto list_attributes() const -> vector<char const *> override {
-		vector<char const *> ret;
+	virtual auto list_attributes() const -> vector<string> override {
+		vector<string> ret;
 
-//		for (auto msg: messages()) {
-//			if (msg.type() == MSG_ATTRIBUTE) {
-//				uint8_t * message_body = msg.data();
-//				auto version = spec_defs::message_attribute_v1_spec::version::get(message_body);
-//
-//				if(version == 1) {
-//					ret.push_back(reinterpret_cast<char *>(message_body+spec_defs::message_attribute_v1_spec::size));
-//				} else {
-//					throw EXCEPTION("Not implemented");
-//				}
-//			}
-//		}
-//
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			if (msg.type == MSG_ATTRIBUTE) {
+				uint8_t * message_body = msg.data;
+				auto version = spec_defs::message_attribute_v1_spec::version::get(message_body);
+
+				if(version == 1) {
+					ret.push_back(reinterpret_cast<char const *>(message_body+spec_defs::message_attribute_v1_spec::size));
+				} else {
+					throw EXCEPTION("Not implemented");
+				}
+			}
+		}
+
 //		if (has_attribute_btree) {
 //			auto btree = btree_v2_header<typename spec_defs::btree_v2_record_type8>(file, file->to_address(attribute_name_btree_address));
 //			auto xx = btree.list_records();
@@ -2727,6 +2728,36 @@ struct object_v2 : public object_commom {
 
 		return ret;
 
+	}
+
+	virtual auto list_attributes() const -> vector<string> override {
+		vector<string> ret;
+
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			if (msg.type == MSG_ATTRIBUTE) {
+				uint8_t * message_body = msg.data;
+				auto version = spec_defs::message_attribute_v1_spec::version::get(message_body);
+
+				if(version == 1) {
+					ret.push_back(reinterpret_cast<char const *>(message_body+spec_defs::message_attribute_v1_spec::size));
+				} else {
+					throw EXCEPTION("Not implemented");
+				}
+			}
+		}
+
+//		if (has_attribute_btree) {
+//			auto btree = btree_v2_header<typename spec_defs::btree_v2_record_type8>(file, file->to_address(attribute_name_btree_address));
+//			auto xx = btree.list_records();
+//			cout << "XXXXX" << endl;
+//			for(auto i: xx) {
+//				cout << (void*)i << endl;
+//			}
+//			cout << "TTTTT" << endl;
+//		}
+
+		return ret;
 	}
 
 	char const * _get_link_name(uint64_t offset) const {
@@ -3125,7 +3156,7 @@ struct _h5file : public _h5obj {
 		return _root_object->keys();
 	}
 
-	virtual auto list_attributes() const -> vector<char const *> override
+	virtual auto list_attributes() const -> vector<string> override
 	{
 		return _root_object->list_attributes();
 	}

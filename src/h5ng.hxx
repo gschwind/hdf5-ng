@@ -78,7 +78,7 @@ struct _h5obj {
 	virtual auto shape() const -> vector<size_t> = 0;
 	virtual auto shape(int i) const -> size_t = 0;
 	virtual auto keys() const -> vector<string> = 0;
-	virtual auto list_attributes() const -> vector<char const *> = 0;
+	virtual auto list_attributes() const -> vector<string> = 0;
 
 	virtual auto modification_time() const -> uint32_t = 0;
 	virtual auto comment() const -> char const * = 0;
@@ -110,7 +110,7 @@ public:
 		return _ptr->keys();
 	}
 
-	vector<char const *> list_attributes() {
+	vector<string> list_attributes() {
 		return _ptr->list_attributes();
 	}
 
