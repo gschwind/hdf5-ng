@@ -2922,6 +2922,77 @@ struct object_v2 : public object_commom {
 		return h5obj{file->make_object(offset)};
 	}
 
+	virtual void print_info() const override {
+		cerr << "XXXXXXXXXXXXXXXX" << endl;
+		if(dataspace.rank) {
+			cout << std::dec;
+			cout << "rank = " << static_cast<unsigned>(*dataspace.rank) << endl;
+
+			if (dataspace._shape) {
+				cout << "shape= {";
+				for(unsigned i = 0; i < *dataspace.rank-1; ++i) {
+					cout << dataspace._shape[i] << ",";
+				}
+				cout << dataspace._shape[*dataspace.rank-1] << "}" << endl;
+			}
+
+			if (dataspace.max_shape) {
+				cout << "max_shape= {";
+				for(unsigned i = 0; i < *dataspace.rank-1; ++i) {
+					cout << dataspace.max_shape[i] << ",";
+				}
+				cout << dataspace.max_shape[*dataspace.rank-1] << "}" << endl;
+			}
+
+			if (dataspace.permutation) {
+				cout << "permutation= {";
+				for(unsigned i = 0; i < *dataspace.rank-1; ++i) {
+					cout << dataspace.max_shape[i] << ",";
+				}
+				cout << dataspace.max_shape[*dataspace.rank-1] << "}" << endl;
+			}
+
+			if (datatype.size_of_elements) {
+				cout << "size_of_elements= " << static_cast<unsigned>(*datatype.size_of_elements) << endl;
+			}
+
+			if (fillvalue.value) {
+				cout << "has_fillvalue" << endl;
+			} else {
+				cout << "do not has fillvalue" << endl;
+			}
+
+//			if (_shape_of_chunk) {
+//				cout << "dimensionality=" << static_cast<unsigned>(*dimensionality) << endl;
+//				cout << "shape_of_chunk= {";
+//				for(unsigned i = 0; i < *dimensionality-1; ++i) {
+//					cout << _shape_of_chunk[i] << ",";
+//				}
+//				cout << _shape_of_chunk[*dimensionality-1] << "}" << endl;
+//			}
+
+			if (datalayout.layout_class == 0) {
+				cout << "compact layout" << endl;
+				cout << "size of compact data =" << datalayout.compact_data_size << endl;
+				cout << "dataset address =" << datalayout.data_address << endl;
+			} else if (datalayout.layout_class == 1) {
+				cout << "continuous layout" << endl;
+				cout << "dataset address = " << datalayout.data_address << endl;
+			} else if (datalayout.layout_class == 2) {
+				cout << "chunked layout (btree-v1)" << endl;
+				cout << "dataset address = " << datalayout.data_address << endl;
+			}
+		}
+
+//		auto attributes = list_attributes();
+//
+//		cout << "Attributes:" << endl;
+//		for (auto a: attributes) {
+//			cout << a << endl;
+//		}
+
+	}
+
 	virtual auto list_attributes() const -> vector<string> override {
 		vector<string> ret;
 
