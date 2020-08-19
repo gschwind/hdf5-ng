@@ -1532,10 +1532,10 @@ struct object_commom : public object
 	} dataspace;
 
 	void parse_dataspace(uint8_t * msg) {
-		cout << "parse_dataspace " << std::dec <<
-				" version="<< static_cast<int>(spec_defs::message_dataspace_spec::version::get(msg)) << " "
-				" rank=" << static_cast<int>(spec_defs::message_dataspace_spec::rank::get(msg)) << " "
-				" flags=0b" << make_bitset(spec_defs::message_dataspace_spec::flags::get(msg)) << endl;
+//		cout << "parse_dataspace " << std::dec <<
+//				" version="<< static_cast<int>(spec_defs::message_dataspace_spec::version::get(msg)) << " "
+//				" rank=" << static_cast<int>(spec_defs::message_dataspace_spec::rank::get(msg)) << " "
+//				" flags=0b" << make_bitset(spec_defs::message_dataspace_spec::flags::get(msg)) << endl;
 
 		dataspace.rank = &spec_defs::message_dataspace_spec::rank::get(msg);
 
@@ -1584,10 +1584,10 @@ struct object_commom : public object
 	} datatype;
 
 	void parse_datatype(uint8_t * msg) {
-		cout << "parse_datatype " << std::dec <<
-				" version="<< static_cast<int>((spec_defs::message_datatype_spec::class_and_version::get(msg)&0xf0) >> 4) << " "
-				" size=" << static_cast<unsigned>(spec_defs::message_datatype_spec::size_of_elements::get(msg))
-				<< endl;
+//		cout << "parse_datatype " << std::dec <<
+//				" version="<< static_cast<int>((spec_defs::message_datatype_spec::class_and_version::get(msg)&0xf0) >> 4) << " "
+//				" size=" << static_cast<unsigned>(spec_defs::message_datatype_spec::size_of_elements::get(msg))
+//				<< endl;
 
 		// TODO
 		datatype.size_of_elements = &spec_defs::message_datatype_spec::size_of_elements::get(msg);
@@ -1599,20 +1599,20 @@ struct object_commom : public object
 	} fillvalue;
 
 	void parse_fillvalue_old(uint8_t * msg) {
-		cout << "parse_datatype " << std::dec <<
-				" size=" << static_cast<unsigned>(spec_defs::message_fillvalue_old_spec::size_of_fillvalue::get(msg))
-				<< endl;
+//		cout << "parse_datatype " << std::dec <<
+//				" size=" << static_cast<unsigned>(spec_defs::message_fillvalue_old_spec::size_of_fillvalue::get(msg))
+//				<< endl;
 		// TODO
 		fillvalue.value = msg + spec_defs::message_fillvalue_old_spec::size;
 	}
 
 	void parse_fillvalue(uint8_t * msg) {
-		cout << "parse_datatype " << std::dec <<
-				" size=" << static_cast<unsigned>(spec_defs::message_fillvalue_spec::version::get(msg)) <<
-				" space_allocation_time=0x" << std::hex << static_cast<int>(spec_defs::message_fillvalue_spec::space_allocation_time::get(msg)) << std::dec <<
-				" fillvalue_write_time=0x" << std::hex << static_cast<int>(spec_defs::message_fillvalue_spec::fillvalue_write_time::get(msg)) << std::dec <<
-				" fillvalue_defined=0x" << std::hex << static_cast<int>(spec_defs::message_fillvalue_spec::fillvalue_defined::get(msg)) << std::dec <<
-				endl;
+//		cout << "parse_datatype " << std::dec <<
+//				" size=" << static_cast<unsigned>(spec_defs::message_fillvalue_spec::version::get(msg)) <<
+//				" space_allocation_time=0x" << std::hex << static_cast<int>(spec_defs::message_fillvalue_spec::space_allocation_time::get(msg)) << std::dec <<
+//				" fillvalue_write_time=0x" << std::hex << static_cast<int>(spec_defs::message_fillvalue_spec::fillvalue_write_time::get(msg)) << std::dec <<
+//				" fillvalue_defined=0x" << std::hex << static_cast<int>(spec_defs::message_fillvalue_spec::fillvalue_defined::get(msg)) << std::dec <<
+//				endl;
 		// TODO
 		if (spec_defs::message_fillvalue_spec::version::get(msg) == 1 or spec_defs::message_fillvalue_spec::fillvalue_defined::get(msg) != 0) {
 			fillvalue.value = msg + spec_defs::message_fillvalue_spec::size + sizeof(uint32_t);
@@ -1626,7 +1626,7 @@ struct object_commom : public object
 		uint8_t xtype = spec_defs::message_shared_vX_spec::type::get(msg); // this parameters seems not used.
 
 		uint64_t address = 0xffff'ffff'ffff'ffffu;
-		cout << "<shared message version="<<version<<" , type=" << xtype << endl;
+//		cout << "<shared message version="<<version<<" , type=" << xtype << endl;
 		switch (version) {
 		case 1: {
 			address = spec_defs::message_shared_v1_spec::address::get(msg);
@@ -1653,8 +1653,8 @@ struct object_commom : public object
 
 		// The actual address of the message.
 		uint64_t offset = 0xffff'ffff'ffff'ffffu;
-		cout << std::dec << "<shared message version="<<static_cast<unsigned>(version)
-			 <<" , type=" << static_cast<unsigned>(xtype) << ">" << endl;
+//		cout << std::dec << "<shared message version="<<static_cast<unsigned>(version)
+//			 <<" , type=" << static_cast<unsigned>(xtype) << ">" << endl;
 		switch (version) {
 		case 1: {
 			offset = spec_defs::message_shared_v1_spec::address::get(msg);
@@ -1692,9 +1692,9 @@ struct object_commom : public object
 	} datalayout;
 
 	void parse_datalayout(uint8_t * msg) {
-		cout << "parse_datalayout " << std::dec <<
-				" version=" << static_cast<unsigned>(spec_defs::message_data_layout_v1_spec::version::get(msg)) <<
-				endl;
+//		cout << "parse_datalayout " << std::dec <<
+//				" version=" << static_cast<unsigned>(spec_defs::message_data_layout_v1_spec::version::get(msg)) <<
+//				endl;
 
 		datalayout.version = spec_defs::message_data_layout_v1_spec::version::get(msg);
 		if (datalayout.version == 1 or datalayout.version == 2)
@@ -1829,10 +1829,10 @@ struct object_commom : public object
 	uint32_t _modification_time;
 
 	void parse_object_modifcation_time(uint8_t * msg) {
-		cout << "parse_object_modifcation_time " << std::dec <<
-				" version=" << static_cast<unsigned>(spec_defs::message_object_modification_time_spec::version::get(msg)) <<
-				" time=" << static_cast<unsigned>(spec_defs::message_object_modification_time_spec::time::get(msg)) <<
-				endl;
+//		cout << "parse_object_modifcation_time " << std::dec <<
+//				" version=" << static_cast<unsigned>(spec_defs::message_object_modification_time_spec::version::get(msg)) <<
+//				" time=" << static_cast<unsigned>(spec_defs::message_object_modification_time_spec::time::get(msg)) <<
+//				endl;
 		uint8_t version = spec_defs::message_object_modification_time_spec::version::get(msg);
 		if (version != 1)
 			throw EXCEPTION("unknown modification time version (%d)", version);
@@ -1884,12 +1884,12 @@ struct object_commom : public object
 			link_info.creation_order_index_address = 0;
 		}
 
-		cout << "parse_link_info" << endl;
-		cout << "link_info.flags = " << make_bitset(link_info.flags) << std::dec << endl;
-		cout << "link_info.maximum_creation_index = " << link_info.maximum_creation_index << endl;
-		cout << "link_info.fractal_head_address = " << link_info.fractal_head_address << endl;
-		cout << "link_info.name_index_b_tree_address = " << link_info.name_index_b_tree_address << endl;
-		cout << "link_info.creation_order_index_address = " << link_info.creation_order_index_address << endl;
+//		cout << "parse_link_info" << endl;
+//		cout << "link_info.flags = " << make_bitset(link_info.flags) << std::dec << endl;
+//		cout << "link_info.maximum_creation_index = " << link_info.maximum_creation_index << endl;
+//		cout << "link_info.fractal_head_address = " << link_info.fractal_head_address << endl;
+//		cout << "link_info.name_index_b_tree_address = " << link_info.name_index_b_tree_address << endl;
+//		cout << "link_info.creation_order_index_address = " << link_info.creation_order_index_address << endl;
 
 	}
 
@@ -1917,7 +1917,7 @@ struct object_commom : public object
 		// default to zero.
 		uint8_t charset = 0x00u;
 		if (flags.test(4)) {
-			cout << "has charset" << endl;
+//			cout << "has charset" << endl;
 			cur.read(charset);
 		}
 
@@ -1933,21 +1933,21 @@ struct object_commom : public object
 		}
 
 		// TODO: Link information.
-		cout << "parse_link" << endl;
-		cout << "flags = " << flags << endl;
-		cout << "type = " << static_cast<int>(type) << endl;
-		cout << "creation_order = " << creation_order << endl;
-		cout << "charset = " << (charset?"UTF-8":"ASCII") << endl;
-		cout << "size_of_length_of_name = " << size_of_length_of_name << endl;
-		cout << "length_of_name = " << length_of_name << endl;
-		cout << "name = " << link_name << endl;
+//		cout << "parse_link" << endl;
+//		cout << "flags = " << flags << endl;
+//		cout << "type = " << static_cast<int>(type) << endl;
+//		cout << "creation_order = " << creation_order << endl;
+//		cout << "charset = " << (charset?"UTF-8":"ASCII") << endl;
+//		cout << "size_of_length_of_name = " << size_of_length_of_name << endl;
+//		cout << "length_of_name = " << length_of_name << endl;
+//		cout << "name = " << link_name << endl;
 
 		uint64_t object_addr = undef_offset;
 
 		switch (type) {
 		case 0: { // Hard link
 			cur.read(object_addr);
-			cout << "hardlink address = " << object_addr << endl;
+//			cout << "hardlink address = " << object_addr << endl;
 			break;
 		}
 		case 1: { // soft link
@@ -1957,10 +1957,11 @@ struct object_commom : public object
 			string soft_link_value = string{soft_link_value_s.begin(), soft_link_value_s.end()};
 			cur.cur += size;
 			cout << "soft link = " << soft_link_value << endl;
+			EXCEPTION("Soft link aren't implemented yet");
 			break;
 		}
 		case 64: { // external link
-
+			EXCEPTION("External link aren't implemented yet");
 			break;
 		}
 		default:
@@ -2001,13 +2002,13 @@ struct object_commom : public object
 			offset += 2;
 		}
 
-		cout << "parse_global_info" << endl;
-		cout << "version = " << static_cast<int>(version) << endl;
-		cout << "flags = " << flags << endl;
-		cout << "maximum_compact_value = " << maximum_compact_value << endl;
-		cout << "minimum_dense_value = " << minimum_dense_value << endl;
-		cout << "estimated_number_of_entry = " << estimated_number_of_entry << endl;
-		cout << "estimated_link_name_length_entry = " << estimated_link_name_length_entry << endl;
+//		cout << "parse_global_info" << endl;
+//		cout << "version = " << static_cast<int>(version) << endl;
+//		cout << "flags = " << flags << endl;
+//		cout << "maximum_compact_value = " << maximum_compact_value << endl;
+//		cout << "minimum_dense_value = " << minimum_dense_value << endl;
+//		cout << "estimated_number_of_entry = " << estimated_number_of_entry << endl;
+//		cout << "estimated_link_name_length_entry = " << estimated_link_name_length_entry << endl;
 
 	}
 
@@ -2087,7 +2088,13 @@ struct object_commom : public object
 //					<< " type = 0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(type) << std::hex
 //					<< " size=" << header.size
 //					<< " flags=" << std::hex << static_cast<int>(header.flags) << ">" << endl;
-			break;
+			break;//		cout << "parse_global_info" << endl;
+			//		cout << "version = " << static_cast<int>(version) << endl;
+			//		cout << "flags = " << flags << endl;
+			//		cout << "maximum_compact_value = " << maximum_compact_value << endl;
+			//		cout << "minimum_dense_value = " << minimum_dense_value << endl;
+			//		cout << "estimated_number_of_entry = " << estimated_number_of_entry << endl;
+			//		cout << "estimated_link_name_length_entry = " << estimated_link_name_length_entry << endl;
 		}
 	}
 
@@ -2176,10 +2183,10 @@ struct object_v1 : public object_commom {
 				// if (not message_block_queue.empty()) implicitly.
 				auto msg = **this;
 
-				cout << "found message <@" << static_cast<void*>(msg.data)
-						<< " type=0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(msg.type) << std::hex
-						<< " size=" << msg.size
-						<< " flags=0b" << msg.flags << ">" << endl;
+//				cout << "found message <@" << static_cast<void*>(msg.data)
+//						<< " type=0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(msg.type) << std::hex
+//						<< " size=" << msg.size
+//						<< " flags=0b" << msg.flags << ">" << endl;
 
 				if (msg.type == MSG_OBJECT_HEADER_CONTINUATION) {
 					if (spec_defs::message_object_header_continuation_spec::length::get(msg.data) > 0) {
@@ -2402,10 +2409,22 @@ struct object_v1 : public object_commom {
 				uint8_t * message_body = msg.data;
 				auto version = spec_defs::message_attribute_v1_spec::version::get(message_body);
 
-				if(version == 1) {
+				switch (version) {
+				case 1: {
 					ret.push_back(reinterpret_cast<char const *>(message_body+spec_defs::message_attribute_v1_spec::size));
-				} else {
+					break;
+				}
+				case 2: {
+					ret.push_back(reinterpret_cast<char const *>(message_body+spec_defs::message_attribute_v2_spec::size));
+					break;
+				}
+				case 3: {
+					ret.push_back(reinterpret_cast<char const *>(message_body+spec_defs::message_attribute_v3_spec::size));
+					break;
+				}
+				default: {
 					throw EXCEPTION("Not implemented");
+				}
 				}
 			}
 		}
@@ -2613,10 +2632,10 @@ struct object_v2 : public object_commom {
 				// if (not message_block_queue.empty()) implicitly.
 				auto msg = **this;
 
-				cout << "found message <@" << static_cast<void*>(msg.data)
-						<< " type=0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(msg.type) << std::hex
-						<< " size=" << msg.size
-						<< " flags=0b" << msg.flags << ">" << endl;
+//				cout << "found message <@" << static_cast<void*>(msg.data)
+//						<< " type=0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(msg.type) << std::hex
+//						<< " size=" << msg.size
+//						<< " flags=0b" << msg.flags << ">" << endl;
 
 				if (msg.type == MSG_OBJECT_HEADER_CONTINUATION) {
 					if (spec_defs::message_object_header_continuation_spec::length::get(msg.data) > 0) {

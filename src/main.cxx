@@ -22,6 +22,10 @@ int main(int argc, char const ** argv) {
 		if (k.size() == 0) {
 			cout << "========== INFO =========" << endl;
 			cur.print_info();
+
+			for (auto x: cur.list_attributes()) {
+				cout << "ATTRIBUTE " << x << endl;
+			}
 			cout << "========== /INFO =========" << endl;
 		} else {
 			if(std::find(visited.begin(), visited.end(), cur) == visited.end()) {

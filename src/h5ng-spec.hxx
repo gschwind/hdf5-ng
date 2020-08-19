@@ -470,6 +470,29 @@ struct message_attribute_v1_spec : public type_spec {
 	enum : uint64_t { size = last<dataspace_size>::size };
 };
 
+// Layout: Attribute Message (Version 2) #0x000C
+struct message_attribute_v2_spec : public type_spec {
+	using version             = spec<uint8_t,  none>;
+	using flags               = spec<uint8_t,  version>;
+	using name_size           = spec<uint16_t, flags>;
+	using datatype_size       = spec<uint16_t, name_size>;
+	using dataspace_size      = spec<uint16_t, datatype_size>;
+	// optional fields
+	enum : uint64_t { size = last<dataspace_size>::size };
+};
+
+// Layout: Attribute Message (Version 3) #0x000C
+struct message_attribute_v3_spec : public type_spec {
+	using version             = spec<uint8_t,  none>;
+	using flags               = spec<uint8_t,  version>;
+	using name_size           = spec<uint16_t, flags>;
+	using datatype_size       = spec<uint16_t, name_size>;
+	using dataspace_size      = spec<uint16_t, datatype_size>;
+	using encoding            = spec<uint8_t, datatype_size>;
+	// optional fields
+	enum : uint64_t { size = last<encoding>::size };
+};
+
 // Layout: Object Comment Message  #0x000D
 struct message_comment_spec : public type_spec {
 	// variable size.
