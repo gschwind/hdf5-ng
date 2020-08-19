@@ -12,31 +12,34 @@ int main(int argc, char const ** argv) {
 
 	h5ng::h5obj hf(argv[1]);
 
-	stack<h5ng::h5obj> s;
+	stack<pair<string, h5ng::h5obj>> s;
 	vector<h5ng::h5obj> visited;
-	s.push(hf);
+	s.push(make_pair("", hf));
 	while(not s.empty()) {
 		auto cur = s.top();
 		s.pop();
-		auto k = cur.keys();
+		auto k = cur.second.keys();
 		if (k.size() == 0) {
 			cout << "========== INFO =========" << endl;
-			cur.print_info();
-
-			for (auto x: cur.list_attributes()) {
-				cout << "ATTRIBUTE " << x << endl;
-			}
+			cout << cur.first << endl;
+			cur.second.print_info();
 			cout << "========== /INFO =========" << endl;
 		} else {
-			if(std::find(visited.begin(), visited.end(), cur) == visited.end()) {
-				for(auto x: cur.keys()) {
-					s.push(cur[x]);
+			if(std::find(visited.begin(), visited.end(), cur.second) == visited.end()) {
+				for(auto x: cur.second.keys()) {
+					string name = cur.first + "/" + x;
+					s.push(make_pair(name, cur.second[x]));
 				}
 			} else {
 				cout << "Already visited node" << endl;
 			}
 		}
-		visited.push_back(cur);
+
+		for (auto x: cur.second.list_attributes()) {
+			cout << "ATTRIBUTE " << x << endl;
+		}
+
+		visited.push_back(cur.second);
 	}
 
 //	cout << "READ DATA 0" << endl;

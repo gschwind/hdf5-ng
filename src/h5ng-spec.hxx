@@ -444,16 +444,11 @@ struct message_attribute_info_spec : public type_spec {
 	using version             = spec<uint8_t,  none>;
 	using flags               = spec<uint8_t, version>;
 
-	// Option #0
-	using maximum_creation_index_o0                = spec<uint16_t, flags>;
-	using fractal_heap_address_o0                  = spec<offset_type, maximum_creation_index_o0>;
-	using attribute_name_btree_address_o0          = spec<offset_type, fractal_heap_address_o0>;
-	using attribute_creatation_order_address_o0    = spec<offset_type, attribute_name_btree_address_o0>;
-
-	// option #1
-	using fractal_heap_address_o1                  = spec<offset_type, flags>;
-	using attribute_name_btree_address_o1          = spec<offset_type, fractal_heap_address_o1>;
-	using attribute_creatation_order_address_o1    = spec<offset_type, attribute_name_btree_address_o1>;
+	// Variable fields :
+	// - maximum_creation_index, 2 bit. optional, present if flag bit #0 is set
+	// - fractal_heap_address, offset_type, always present
+	// - attribute_name_btree_address, offset_type, always present
+	// - attribute_creatation_order_address, offset_type, optional present if flags bit #1 is set
 
 	enum : uint64_t { size = last<flags>::size };
 
