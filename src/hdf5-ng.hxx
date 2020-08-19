@@ -1616,32 +1616,93 @@ struct object_data_layout_t {
 
 	uint8_t version;
 
-	uint8_t layout_class;
-	union {
-		offset_type data_address;
-		offset_type chunk_btree_v1_root;
-	};
-
-	uint8_t dimensionality; // same as rank.
-
-	uint8_t chunk_indexing_type;
-	vector<uint32_t> shape_of_chunk;
-
-	uint32_t * size_of_data_element_of_chunk;
-
-	// compact data optionnal elements
-	uint32_t compact_data_size;
-
-	uint64_t size_of_continuous_data;
-
-	uint8_t flags;
-
 	enum layout_class_e : uint8_t {
 		LAYOUT_COMPACT       = 0u,
 		LAYOUT_CONTIGUOUS    = 1u,
 		LAYOUT_CHUNKED       = 2u,
 		LAYOUT_VIRTUAL       = 3u,
 	};
+
+	uint8_t layout_class;
+
+	// COMPACT LAYOUT
+	uint8_t           compact_dimensionality;
+	offset_type       compact_data_address;
+	uint32_t          compact_data_size;
+	vector<uint32_t>  compact_shape;
+
+	// CONTIGUOUS LAYOUT
+	uint8_t           contiguous_dimensionality;   //< same as dataspace.rank
+	offset_type       contiguous_data_address;
+	vector<uint32_t>  contiguous_shape;            //< same as dataspace.shape
+	length_type       contiguous_data_size;
+
+	// CHUNKED LAYOUT
+	uint8_t           chunk_flags;
+	uint8_t           chunk_dimensionality;
+	offset_type       chunk_btree_v1_root;
+	uint8_t           chunk_indexing_type;
+	vector<uint32_t>  chunk_shape;
+	uint32_t          chunk_size_of_element;
+
+
+	union {
+		// Single Chunk data
+		struct {
+			length_type       size_of_filtered_chunk;
+			uint32_t          filters;
+			offset_type       data_address;
+		} chunk_single_chunk;
+
+		struct {
+			offset_type       data_address;
+		} chunk_implicit;
+
+		// Fixed Array data
+		struct {
+			uint8_t           page_bits;
+			offset_type       data_address;
+		} chunk_fixed_array;
+
+		// Extensible Array data
+		struct {
+			uint8_t           max_bits;
+			uint8_t           index_elements;
+			uint8_t           min_pointers;
+			uint8_t           min_elements;
+			uint16_t          page_bits;
+			offset_type       data_address;
+		} chunk_extensible_array;
+
+		// B-Tree V2 data
+		struct {
+			uint32_t          node_size;
+			uint8_t           split_percent;
+			uint8_t           merge_percent;
+			offset_type       data_address;
+		} chunk_btree_v2;
+
+	};
+
+
+	enum chunk_indexing_type_e : uint8_t {
+		CHUNK_INDEXING_UNDEF             = 0u, // used for btree_v1
+		CHUNK_INDEXING_SINGLE_CHUNK      = 1u,
+		CHUNK_INDEXING_IMPLICIT          = 2u,
+		CHUNK_INDEXING_FIXED_ARRAY       = 3u,
+		CHUNK_INDEXING_EXTENSIBLE_ARRAY  = 4u,
+		CHUNK_INDEXING_BTREE_V2          = 5u
+	};
+
+	// VIRTUAL LAYOUT
+
+
+
+
+
+
+
+
 
 
 	object_data_layout_t(file_impl * file, uint8_t * msg) : file{file}
@@ -1657,37 +1718,41 @@ struct object_data_layout_t {
 		case 2: { // version 1 & 2
 
 			layout_class = spec_defs::message_data_layout_v1_spec::layout_class::get(msg);
-			dimensionality = &spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
 
 			auto cur = addr_reader{msg+spec_defs::message_data_layout_v1_spec::size};
 
 			switch(layout_class) {
-			case LAYOUT_COMPACT:
+			case LAYOUT_COMPACT: {
 				// in case of compact layout, data are stored within the message.
-				// Setup at the end
+				compact_dimensionality = &spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
+				auto compact_shape_ptr = reinterpret_cast<uint32_t*>(cur.cur);
+				compact_shape = vector<uint32_t>{&compact_shape_ptr[0], &compact_shape_ptr[compact_dimensionality]};
+				cur.cur += compact_dimensionality*sizeof(uint32_t);
+				compact_data_size = cur.read<uint32_t>();
+				compact_data_address = file->to_offset(cur.cur);
 				break;
-			case LAYOUT_CONTIGUOUS:
-				data_address = cur.read<offset_type>();
+			}
+			case LAYOUT_CONTIGUOUS: {
+				contiguous_dimensionality = &spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
+				contiguous_data_address = cur.read<offset_type>();
+				auto contiguous_shape_ptr = reinterpret_cast<uint32_t*>(cur.cur);
+				contiguous_shape = vector<uint32_t>{&contiguous_shape_ptr[0], &contiguous_shape_ptr[contiguous_dimensionality]};
+				cur.cur += contiguous_dimensionality*sizeof(uint32_t);
+				contiguous_data_size = undef_length;
 				break;
-			case LAYOUT_CHUNKED:
+			}
+			case LAYOUT_CHUNKED: {
+				chunk_dimensionality = &spec_defs::message_data_layout_v1_spec::dimensionnality::get(msg);
 				chunk_btree_v1_root = cur.read<offset_type>();
+				auto chunk_shape_ptr = reinterpret_cast<uint32_t*>(cur.cur);
+				chunk_shape = vector<uint32_t>{&chunk_shape_ptr[0], &chunk_shape_ptr[chunk_dimensionality]};
+				cur.cur += chunk_dimensionality*sizeof(uint32_t);
+				chunk_size_of_element = cur.read<uint32_t>();
 				break;
+			}
 			default:
 				// This should never append in well formed file.
 				throw EXCEPTION("Unexpected layout_class");
-			}
-
-			auto shape_of_chunk_ptr = reinterpret_cast<uint32_t*>(cur.cur);
-			shape_of_chunk = vector<uint32_t>{&shape_of_chunk_ptr[0], &shape_of_chunk_ptr[dimensionality]};
-			cur.cur += dimensionality*sizeof(uint32_t);
-
-			if(layout_class == LAYOUT_CHUNKED) { // chunked
-				size_of_data_element_of_chunk = cur.read<uint32_t>();
-			}
-
-			if (layout_class == LAYOUT_COMPACT) {
-				compact_data_size = cur.read<uint32_t>();
-				data_address = file->to_offset(cur.cur);
 			}
 
 			break;
@@ -1701,20 +1766,19 @@ struct object_data_layout_t {
 			switch(layout_class) {
 			case LAYOUT_COMPACT:
 				compact_data_size = cur.read<uint16_t>();
-				data_address = file->to_offset(cur.cur);
+				compact_data_address = file->to_offset(cur.cur);
 				break;
 			case LAYOUT_CONTIGUOUS:
-				data_address = cur.read<offset_type>();
-				size_of_continuous_data = cur.read<length_type>();
+				contiguous_data_address = cur.read<offset_type>();
+				contiguous_data_size = cur.read<length_type>();
 				break;
 			case LAYOUT_CHUNKED: {
-				dimensionality = cur.read<uint8_t>();
+				chunk_dimensionality = cur.read<uint8_t>();
 				chunk_btree_v1_root = cur.read<offset_type>();
-
-				auto shape_of_chunk_ptr = reinterpret_cast<uint32_t*>(cur.cur);
-				shape_of_chunk = vector<uint32_t>{&shape_of_chunk_ptr[0], &shape_of_chunk_ptr[dimensionality]};
-				cur.cur += dimensionality*sizeof(uint32_t);
-				size_of_data_element_of_chunk = cur.read<uint32_t>();
+				auto chunk_shape_ptr = reinterpret_cast<uint32_t*>(cur.cur);
+				chunk_shape = vector<uint32_t>{&chunk_shape_ptr[0], &chunk_shape_ptr[chunk_dimensionality]};
+				cur.cur += chunk_dimensionality*sizeof(uint32_t);
+				chunk_size_of_element = cur.read<uint32_t>();
 				break;
 			}
 			default:
@@ -1733,47 +1797,56 @@ struct object_data_layout_t {
 			switch(layout_class) {
 			case LAYOUT_COMPACT: // same as v3
 				compact_data_size = cur.read<uint16_t>();
-				data_address = file->to_offset(cur.cur);
+				compact_data_address = file->to_offset(cur.cur);
 				break;
 			case LAYOUT_CONTIGUOUS: // same as v3
-				data_address = cur.read<offset_type>();
-				size_of_continuous_data = cur.read<length_type>();
+				contiguous_data_address = cur.read<offset_type>();
+				contiguous_data_size = cur.read<length_type>();
 				break;
 			case LAYOUT_CHUNKED: { // /!\ not the same as v3
 
-				flags = cur.read<uint8_t>();
-				dimensionality = cur.read<uint8_t>();
+				chunk_flags = cur.read<uint8_t>();
+				chunk_dimensionality = cur.read<uint8_t>();
 
 				uint8_t dimensionality_encoded_size = cur.read<uint8_t>();
-				shape_of_chunk.resize(dimensionality);
+				chunk_shape.resize(chunk_dimensionality);
 
-				for (unsigned i = 0; i < dimensionality; ++i)
-					shape_of_chunk[i] = cur.reads(dimensionality_encoded_size);
+				for (unsigned i = 0; i < chunk_dimensionality; ++i)
+					chunk_shape[i] = cur.reads(dimensionality_encoded_size);
 
 				chunk_indexing_type = cur.read<uint8_t>();
 
-				// TODO: parse indexing data
 				uint64_t size_of_index_data = 0;
 				switch(chunk_indexing_type) {
-				case 1:
-					size_of_index_data = sizeof(length_type) + sizeof(uint32_t);
+				case CHUNK_INDEXING_SINGLE_CHUNK:
+					cur.cur += sizeof(length_type) + sizeof(uint32_t);
+					chunk_single_chunk.size_of_filtered_chunk = cur.read<length_type>();
+					chunk_single_chunk.filters = cur.read<uint32_t>();
+					chunk_single_chunk.data_address = cur.read<offset_type>();
 					break;
-				case 2:
-					size_of_index_data = 0;
+				case CHUNK_INDEXING_IMPLICIT:
+					chunk_implicit.data_address = cur.read<offset_type>();
 					break;
-				case 3:
-					size_of_index_data = sizeof(uint8_t);
+				case CHUNK_INDEXING_FIXED_ARRAY:
+					chunk_fixed_array.page_bits = cur.read<uint8_t>();
+					chunk_fixed_array.data_address = cur.read<offset_type>();
 					break;
-				case 4:
-					size_of_index_data = 6;
+				case CHUNK_INDEXING_EXTENSIBLE_ARRAY:
+					chunk_extensible_array.max_bits = cur.read<uint8_t>();
+					chunk_extensible_array.index_elements = cur.read<uint8_t>();
+					chunk_extensible_array.min_pointers = cur.read<uint8_t>();
+					chunk_extensible_array.min_elements = cur.read<uint8_t>();
+					chunk_extensible_array.page_bits = cur.read<uint16_t>();
+					chunk_extensible_array.data_address = cur.read<offset_type>();
 					break;
-				case 5:
-					size_of_index_data = 6;
+				case CHUNK_INDEXING_BTREE_V2:
+					chunk_btree_v2.node_size = cur.read<uint32_t>();
+					chunk_btree_v2.split_percent = cur.read<uint8_t>();
+					chunk_btree_v2.merge_percent = cur.read<uint8_t>();
+					chunk_btree_v2.data_address = cur.read<offset_type>();
 					break;
 				}
 
-				// TODO:
-				data_address = cur.read<offset_type>();
 				break;
 			}
 			case LAYOUT_VIRTUAL:
