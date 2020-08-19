@@ -1893,7 +1893,7 @@ struct object_commom : public object
 
 	}
 
-	void parse_link(uint8_t * msg)
+	pair<string, uint64_t> parse_link(uint8_t * msg) const
 	{
 		uint8_t version = spec_defs::message_link_spec::version::get(msg);
 		if (version != 1) {
@@ -1942,16 +1942,32 @@ struct object_commom : public object
 		cout << "length_of_name = " << length_of_name << endl;
 		cout << "name = " << link_name << endl;
 
+		uint64_t object_addr = undef_offset;
+
 		switch (type) {
 		case 0: { // Hard link
-			uint64_t object_addr = cur.read<uint64_t>();
+			cur.read(object_addr);
 			cout << "hardlink address = " << object_addr << endl;
+			break;
+		}
+		case 1: { // soft link
+			auto size = cur.read<uint16_t>();
+			vector<uint8_t> soft_link_value_s{&cur.cur[0], &cur.cur[size]};
+			soft_link_value_s.push_back(0u);
+			string soft_link_value = string{soft_link_value_s.begin(), soft_link_value_s.end()};
+			cur.cur += size;
+			cout << "soft link = " << soft_link_value << endl;
+			break;
+		}
+		case 64: { // external link
+
 			break;
 		}
 		default:
 			throw EXCEPTION("Unhandled link type");
 		}
 
+		return {link_name, object_addr};
 
 	}
 
@@ -2089,6 +2105,8 @@ struct object_v1 : public object_commom {
 	using object_commom::_comment;
 	using object_commom::parse_shared;
 	using object_commom::xparse_shared;
+	using object_commom::attribute_info;
+	using object_commom::parse_link;
 
 	using object_commom::dispatch_message;
 
@@ -2243,68 +2261,10 @@ struct object_v1 : public object_commom {
 
 			switch (msg.type) {
 			case MSG_LINK: {
-					uint8_t version = spec_defs::message_link_spec::version::get(msg.data);
-					if (version != 1) {
-						throw EXCEPTION("Unknown Link Info version");
-					}
-
-					auto flags = make_bitset(spec_defs::message_link_info_spec::flags::get(msg.data));
-
-					auto cur = addr_reader{msg.data+spec_defs::message_link_info_spec::size};
-
-					uint8_t type = 0u;
-					if (flags.test(3)) {
-						cur.read(type);
-					}
-
-					uint64_t creation_order = 0xffff'ffff'ffff'ffffu;
-					if (flags.test(2)) {
-						cur.read(creation_order);
-					}
-
-					// default to zero.
-					uint8_t charset = 0x00u;
-					if (flags.test(4)) {
-						cout << "has charset" << endl;
-						cur.read(charset);
-					}
-
-					uint64_t size_of_length_of_name = 1u<<(flags.to_ulong()&0x0000'0011u);
-					uint64_t length_of_name = cur.reads(size_of_length_of_name);
-
-					string link_name;
-					{
-						vector<uint8_t> link_name_s{&cur.cur[0], &cur.cur[length_of_name]};
-						link_name_s.push_back(0u);
-						link_name = string{link_name_s.begin(), link_name_s.end()};
-						cur.cur += length_of_name;
-					}
-
-					// TODO: Link information.
-					cout << "parse_link" << endl;
-					cout << "flags = " << flags << endl;
-					cout << "type = " << static_cast<int>(type) << endl;
-					cout << "creation_order = " << creation_order << endl;
-					cout << "charset = " << (charset?"UTF-8":"ASCII") << endl;
-					cout << "size_of_length_of_name = " << size_of_length_of_name << endl;
-					cout << "length_of_name = " << length_of_name << endl;
-					cout << "name = " << link_name << endl;
-
-					if (link_name == name) {
-						switch (type) {
-						case 0: { // Hard link
-							offset = cur.read<uint64_t>();
-							cout << "hardlink address = " << offset << endl;
-							break;
-						}
-						default:
-							throw EXCEPTION("Unhandled link type");
-						}
-					}
-
+					auto link = parse_link(msg.data);
+					offset = link.second;
 					break;
 				}
-
 			case MSG_SYMBOL_TABLE: {
 					offset = object_symbol_table_t{file, msg.data}[name];
 					break;
@@ -2417,68 +2377,10 @@ struct object_v1 : public object_commom {
 
 			switch (msg.type) {
 			case MSG_LINK: {
-					uint8_t version = spec_defs::message_link_spec::version::get(msg.data);
-					if (version != 1) {
-						throw EXCEPTION("Unknown Link Info version");
-					}
-
-					auto flags = make_bitset(spec_defs::message_link_info_spec::flags::get(msg.data));
-
-					auto cur = addr_reader{msg.data+spec_defs::message_link_info_spec::size};
-
-					uint8_t type = 0u;
-					if (flags.test(3)) {
-						cur.read(type);
-					}
-
-					uint64_t creation_order = 0xffff'ffff'ffff'ffffu;
-					if (flags.test(2)) {
-						cur.read(creation_order);
-					}
-
-					// default to zero.
-					uint8_t charset = 0x00u;
-					if (flags.test(4)) {
-						cout << "has charset" << endl;
-						cur.read(charset);
-					}
-
-					uint64_t size_of_length_of_name = 1u<<(flags.to_ulong()&0x0000'0011u);
-					uint64_t length_of_name = cur.reads(size_of_length_of_name);
-
-					string link_name;
-					{
-						vector<uint8_t> link_name_s{&cur.cur[0], &cur.cur[length_of_name]};
-						link_name_s.push_back(0u);
-						link_name = string{link_name_s.begin(), link_name_s.end()};
-						cur.cur += length_of_name;
-					}
-
-					// TODO: Link information.
-					cout << "parse_link" << endl;
-					cout << "flags = " << flags << endl;
-					cout << "type = " << static_cast<int>(type) << endl;
-					cout << "creation_order = " << creation_order << endl;
-					cout << "charset = " << (charset?"UTF-8":"ASCII") << endl;
-					cout << "size_of_length_of_name = " << size_of_length_of_name << endl;
-					cout << "length_of_name = " << length_of_name << endl;
-					cout << "name = " << link_name << endl;
-
-					ret.push_back(link_name);
-
-					switch (type) {
-					case 0: { // Hard link
-						uint64_t object_addr = cur.read<uint64_t>();
-						cout << "hardlink address = " << object_addr << endl;
-						break;
-					}
-					default:
-						throw EXCEPTION("Unhandled link type");
-					}
-
+					auto link = parse_link(msg.data);
+					ret.push_back(link.first);
 					break;
 				}
-
 			case MSG_SYMBOL_TABLE: {
 					object_symbol_table_t{file, msg.data}.ls(ret);
 					break;
@@ -2508,15 +2410,15 @@ struct object_v1 : public object_commom {
 			}
 		}
 
-//		if (has_attribute_btree) {
-//			auto btree = btree_v2_header<typename spec_defs::btree_v2_record_type8>(file, file->to_address(attribute_name_btree_address));
-//			auto xx = btree.list_records();
-//			cout << "XXXXX" << endl;
-//			for(auto i: xx) {
-//				cout << (void*)i << endl;
-//			}
-//			cout << "TTTTT" << endl;
-//		}
+		if (attribute_info.has_attribute_btree) {
+			auto btree = btree_v2_header<typename spec_defs::btree_v2_record_type8>(file, file->to_address(attribute_info.attribute_name_btree_address));
+			auto xx = btree.list_records();
+			cout << "XXXXX" << endl;
+			for(auto i: xx) {
+				cout << (void*)i << endl;
+			}
+			cout << "TTTTT" << endl;
+		}
 
 		return ret;
 	}
@@ -2620,6 +2522,7 @@ struct object_v2 : public object_commom {
 	using object_commom::dispatch_message;
 	using object_commom::parse_shared;
 	using object_commom::xparse_shared;
+	using object_commom::parse_link;
 
 	object_v2(file_impl * file, uint8_t * addr) : object_commom{file, addr} {
 		cout << "creating object v2, object cache size = TODO" << endl;
@@ -2764,68 +2667,10 @@ struct object_v2 : public object_commom {
 
 			switch (msg.type) {
 			case MSG_LINK: {
-					uint8_t version = spec_defs::message_link_spec::version::get(msg.data);
-					if (version != 1) {
-						throw EXCEPTION("Unknown Link Info version");
-					}
-
-					auto flags = make_bitset(spec_defs::message_link_info_spec::flags::get(msg.data));
-
-					auto cur = addr_reader{msg.data+spec_defs::message_link_info_spec::size};
-
-					uint8_t type = 0u;
-					if (flags.test(3)) {
-						cur.read(type);
-					}
-
-					uint64_t creation_order = 0xffff'ffff'ffff'ffffu;
-					if (flags.test(2)) {
-						cur.read(creation_order);
-					}
-
-					// default to zero.
-					uint8_t charset = 0x00u;
-					if (flags.test(4)) {
-						cout << "has charset" << endl;
-						cur.read(charset);
-					}
-
-					uint64_t size_of_length_of_name = 1u<<(flags.to_ulong()&0x0000'0011u);
-					uint64_t length_of_name = cur.reads(size_of_length_of_name);
-
-					string link_name;
-					{
-						vector<uint8_t> link_name_s{&cur.cur[0], &cur.cur[length_of_name]};
-						link_name_s.push_back(0u);
-						link_name = string{link_name_s.begin(), link_name_s.end()};
-						cur.cur += length_of_name;
-					}
-
-					// TODO: Link information.
-					cout << "parse_link" << endl;
-					cout << "flags = " << flags << endl;
-					cout << "type = " << static_cast<int>(type) << endl;
-					cout << "creation_order = " << creation_order << endl;
-					cout << "charset = " << (charset?"UTF-8":"ASCII") << endl;
-					cout << "size_of_length_of_name = " << size_of_length_of_name << endl;
-					cout << "length_of_name = " << length_of_name << endl;
-					cout << "name = " << link_name << endl;
-
-					ret.push_back(link_name);
-
-					switch (type) {
-					case 0: { // Hard link
-						uint64_t object_addr = cur.read<uint64_t>();
-						cout << "hardlink address = " << object_addr << endl;
-						break;
-					}
-					default:
-						throw EXCEPTION("Unhandled link type");
-					}
-
+					auto link = parse_link(msg.data);
+					ret.push_back(link.first);
 					break;
 				}
-
 			case MSG_SYMBOL_TABLE: {
 					object_symbol_table_t{file, msg.data}.ls(ret);
 					break;
@@ -2849,68 +2694,10 @@ struct object_v2 : public object_commom {
 
 			switch (msg.type) {
 			case MSG_LINK: {
-					uint8_t version = spec_defs::message_link_spec::version::get(msg.data);
-					if (version != 1) {
-						throw EXCEPTION("Unknown Link Info version");
-					}
-
-					auto flags = make_bitset(spec_defs::message_link_info_spec::flags::get(msg.data));
-
-					auto cur = addr_reader{msg.data+spec_defs::message_link_info_spec::size};
-
-					uint8_t type = 0u;
-					if (flags.test(3)) {
-						cur.read(type);
-					}
-
-					uint64_t creation_order = 0xffff'ffff'ffff'ffffu;
-					if (flags.test(2)) {
-						cur.read(creation_order);
-					}
-
-					// default to zero.
-					uint8_t charset = 0x00u;
-					if (flags.test(4)) {
-						cout << "has charset" << endl;
-						cur.read(charset);
-					}
-
-					uint64_t size_of_length_of_name = 1u<<(flags.to_ulong()&0x0000'0011u);
-					uint64_t length_of_name = cur.reads(size_of_length_of_name);
-
-					string link_name;
-					{
-						vector<uint8_t> link_name_s{&cur.cur[0], &cur.cur[length_of_name]};
-						link_name_s.push_back(0u);
-						link_name = string{link_name_s.begin(), link_name_s.end()};
-						cur.cur += length_of_name;
-					}
-
-					// TODO: Link information.
-					cout << "parse_link" << endl;
-					cout << "flags = " << flags << endl;
-					cout << "type = " << static_cast<int>(type) << endl;
-					cout << "creation_order = " << creation_order << endl;
-					cout << "charset = " << (charset?"UTF-8":"ASCII") << endl;
-					cout << "size_of_length_of_name = " << size_of_length_of_name << endl;
-					cout << "length_of_name = " << length_of_name << endl;
-					cout << "name = " << link_name << endl;
-
-					if (link_name == name) {
-						switch (type) {
-						case 0: { // Hard link
-							offset = cur.read<uint64_t>();
-							cout << "hardlink address = " << offset << endl;
-							break;
-						}
-						default:
-							throw EXCEPTION("Unhandled link type");
-						}
-					}
-
+					auto link = parse_link(msg.data);
+					offset = link.second;
 					break;
 				}
-
 			case MSG_SYMBOL_TABLE: {
 					offset = object_symbol_table_t{file, msg.data}[name];
 					break;
