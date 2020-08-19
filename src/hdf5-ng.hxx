@@ -99,9 +99,58 @@ static _named_tuple_0 OFFSETX[4] = {
 };
 
 template<typename T>
-static uint64_t read_at(uint8_t * addr) {
+static T & read_at(uint8_t * const addr)
+{
 	return *reinterpret_cast<T*>(addr);
 }
+
+struct addr_reader {
+	uint8_t * cur;
+	addr_reader(uint8_t * cur) : cur{cur} { }
+
+	addr_reader(addr_reader const &) = default;
+	addr_reader & operator=(addr_reader const &) = default;
+
+	template<typename T>
+	inline T read()
+	{
+		T ret = *reinterpret_cast<T*>(cur);
+		cur += sizeof(T);
+		return ret;
+	}
+
+	template<typename T>
+	inline void read(T & v)
+	{
+		v = *reinterpret_cast<T*>(cur);
+		cur += sizeof(T);
+	}
+
+	inline uint64_t reads(size_t s)
+	{
+		uint64_t ret;
+		switch(s) {
+		case 1:
+			ret = read<uint8_t>();
+			break;
+		case 2:
+			ret = read<uint16_t>();
+			break;
+		case 4:
+			ret = read<uint32_t>();
+			break;
+		case 8:
+			ret = read<uint64_t>();
+			break;
+		default:
+			throw EXCEPTION("Unexpected read size");
+		}
+		return ret;
+	}
+
+
+};
+
 
 template<typename T>
 static bitset<sizeof(T)*8> make_bitset(T v) {
@@ -145,13 +194,13 @@ using data_reader_func = uint64_t (*)(uint8_t*);
 static inline data_reader_func get_reader_for(uint8_t size) {
 	switch(size) {
 	case 1:
-		return read_at<uint8_t>;
+		return [](uint8_t * addr) -> uint64_t { return read_at<uint8_t>(addr); };
 	case 2:
-		return read_at<uint16_t>;
+		return [](uint8_t * addr) -> uint64_t { return read_at<uint16_t>(addr); };
 	case 4:
-		return read_at<uint32_t>;
+		return [](uint8_t * addr) -> uint64_t { return read_at<uint32_t>(addr); };
 	case 8:
-		return read_at<uint64_t>;
+		return [](uint8_t * addr) -> uint64_t { return read_at<uint64_t>(addr); };
 	default:
 		return nullptr;
 	}
@@ -1439,6 +1488,34 @@ struct object_commom : public object
 
 	}
 
+	// Parse shared message to get the actual message offset
+	static uint64_t xparse_shared(uint8_t * msg)
+	{
+		uint8_t version = spec_defs::message_shared_vX_spec::version::get(msg);
+
+		uint8_t xtype = spec_defs::message_shared_vX_spec::type::get(msg); // this parameters seems not used.
+
+		// The actual address of the message.
+		uint64_t offset = 0xffff'ffff'ffff'ffffu;
+		cout << std::dec << "<shared message version="<<static_cast<unsigned>(version)
+			 <<" , type=" << static_cast<unsigned>(xtype) << ">" << endl;
+		switch (version) {
+		case 1: {
+			offset = spec_defs::message_shared_v1_spec::address::get(msg);
+			break;
+		}
+		case 2: {
+			offset = spec_defs::message_shared_v2_spec::address::get(msg);
+			break;
+		}
+		default:
+			throw EXCEPTION("Unsupported shared message version");
+		}
+
+		return offset;
+
+	}
+
 	struct {
 		uint8_t version;
 
@@ -1682,48 +1759,58 @@ struct object_commom : public object
 			throw EXCEPTION("Unknown Link Info version");
 		}
 
-		uint8_t flags = spec_defs::message_link_info_spec::flags::get(msg);
+		auto flags = make_bitset(spec_defs::message_link_info_spec::flags::get(msg));
 
-		uint64_t offset = spec_defs::message_link_info_spec::size;
+		auto cur = addr_reader{msg+spec_defs::message_link_info_spec::size};
 
-		uint8_t type = 0xffu;
-		if (flags & 0b0000'1000) {
-			type = read_at<uint8_t>(&msg[offset]);
-			offset += 1;
+		uint8_t type = 0u;
+		if (flags.test(3)) {
+			cur.read(type);
 		}
 
 		uint64_t creation_order = 0xffff'ffff'ffff'ffffu;
-		if (flags & 0b0000'1000) {
-			creation_order = read_at<uint64_t>(&msg[offset]);
-			offset += 8;
+		if (flags.test(2)) {
+			cur.read(creation_order);
 		}
 
 		// default to zero.
 		uint8_t charset = 0x00u;
-		if (flags & 0b0001'0000) {
-			charset = read_at<uint8_t>(&msg[offset]);
-			offset += 1;
+		if (flags.test(4)) {
+			cout << "has charset" << endl;
+			cur.read(charset);
 		}
 
-		uint64_t length_of_name = 0u;
-		get_reader_for(1<<(flags&0x0000'0011u))(&msg[offset]);
-		offset += 1<<(flags&0x0000'0011u);
+		uint64_t size_of_length_of_name = 1u<<(flags.to_ulong()&0x0000'0011u);
+		uint64_t length_of_name = cur.reads(size_of_length_of_name);
 
 		string link_name;
 		{
-			vector<uint8_t> link_name_s{&msg[offset], &msg[offset+length_of_name]};
+			vector<uint8_t> link_name_s{&cur.cur[0], &cur.cur[length_of_name]};
 			link_name_s.push_back(0u);
 			link_name = string{link_name_s.begin(), link_name_s.end()};
+			cur.cur += length_of_name;
 		}
 
 		// TODO: Link information.
 		cout << "parse_link" << endl;
-		cout << "flags = " << make_bitset(flags) << endl;
+		cout << "flags = " << flags << endl;
 		cout << "type = " << static_cast<int>(type) << endl;
 		cout << "creation_order = " << creation_order << endl;
 		cout << "charset = " << (charset?"UTF-8":"ASCII") << endl;
+		cout << "size_of_length_of_name = " << size_of_length_of_name << endl;
 		cout << "length_of_name = " << length_of_name << endl;
 		cout << "name = " << link_name << endl;
+
+		switch (type) {
+		case 0: { // Hard link
+			uint64_t object_addr = cur.read<uint64_t>();
+			cout << "hardlink address = " << object_addr << endl;
+			break;
+		}
+		default:
+			throw EXCEPTION("Unhandled link type");
+		}
+
 
 	}
 
@@ -1735,13 +1822,13 @@ struct object_commom : public object
 			throw EXCEPTION("Unknown Group Info version");
 		}
 
-		uint8_t flags = spec_defs::message_link_info_spec::flags::get(msg);
+		auto flags = make_bitset(spec_defs::message_link_info_spec::flags::get(msg));
 
 		uint64_t offset = spec_defs::message_link_info_spec::size;
 
 		uint16_t maximum_compact_value = 0xffffu;
 		uint16_t minimum_dense_value = 0xffffu;
-		if (flags & 0b0000'0001u) {
+		if (flags.test(0)) {
 			maximum_compact_value = read_at<uint16_t>(&msg[offset]);
 			offset += 2;
 			minimum_dense_value = read_at<uint16_t>(&msg[offset]);
@@ -1750,7 +1837,7 @@ struct object_commom : public object
 
 		uint16_t estimated_number_of_entry = 0xffffu;
 		uint16_t estimated_link_name_length_entry = 0xffffu;
-		if (flags & 0b0000'0010u) {
+		if (flags.test(1)) {
 			estimated_number_of_entry = read_at<uint16_t>(&msg[offset]);
 			offset += 2;
 			estimated_link_name_length_entry = read_at<uint16_t>(&msg[offset]);
@@ -1758,7 +1845,8 @@ struct object_commom : public object
 		}
 
 		cout << "parse_global_info" << endl;
-		cout << "flags = " << make_bitset(flags) << endl;
+		cout << "version = " << static_cast<int>(version) << endl;
+		cout << "flags = " << flags << endl;
 		cout << "maximum_compact_value = " << maximum_compact_value << endl;
 		cout << "minimum_dense_value = " << minimum_dense_value << endl;
 		cout << "estimated_number_of_entry = " << estimated_number_of_entry << endl;
@@ -1782,6 +1870,8 @@ struct object_commom : public object
 	void dispatch_message(uint8_t type, uint8_t * data)
 	{
 		switch(type) {
+		case MSG_NIL:
+			break;
 		case MSG_DATASPACE:
 			parse_dataspace(data);
 			break;
@@ -1846,6 +1936,12 @@ struct object_commom : public object
 		}
 	}
 
+	struct message_handler_t {
+		uint8_t type;
+		uint16_t size;
+		bitset<8> flags;
+		uint8_t * data;
+	};
 
 	// this struct is incomplete.
 	struct message_block_t {
@@ -2292,26 +2388,54 @@ struct object_v2 : public object_commom {
 	using object_commom::_comment;
 	using object_commom::dispatch_message;
 	using object_commom::parse_shared;
+	using object_commom::xparse_shared;
 
-	struct message_block_v2 : public object_commom::message_block_t {
-		uint64_t _header_size;
-
-		message_block_v2(uint64_t header_size, uint8_t * cur, uint64_t length) : object_commom::message_block_t{cur, length}, _header_size{header_size} { }
-		message_block_v2(uint64_t header_size, uint8_t * cur, uint8_t * end) : object_commom::message_block_t{cur, end}, _header_size{header_size} { }
-		message_block_v2(uint64_t header_size, file_impl & file, uint8_t * msg) :
-			message_block_v2{header_size,
-				file.to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg)),
-				spec_defs::message_object_header_continuation_spec::length::get(msg)}
-		{
-
-		}
-
-		message_block_v2 & operator++() {
-			object_commom::message_block_t::_cur += _header_size + spec_defs::message_header_v2_spec::size_of_message::get(object_commom::message_block_t::_cur);
-			return *this;
-		}
+	struct message_handler_t {
+		uint8_t type;    //< actual type
+		uint16_t size;   //< size of message in the current message block, not the actual size, may be shared or padded
+		bitset<8> flags; //< flags of current messages
+		uint8_t * data;  //< pointer to message data
 
 	};
+
+//	struct message_block_v2 {
+//		uint64_t _header_size;
+//		uint8_t * _cur;
+//		uint8_t * _end;
+//
+//
+//		message_block_v2(message_block_t const &) = default;
+//		message_block_v2 & operator=(message_block_t const &) = default;
+//
+//		message_block_v2(uint64_t header_size, uint8_t * cur, uint64_t length) : _cur{cur}, _end{length}, _header_size{header_size} { }
+//		message_block_v2(uint64_t header_size, uint8_t * cur, uint8_t * end) : _cur{cur}, _end{end}, _header_size{header_size} { }
+//		message_block_v2(uint64_t header_size, file_impl & file, uint8_t * msg) :
+//			message_block_v2{header_size,
+//				file.to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg)),
+//				spec_defs::message_object_header_continuation_spec::length::get(msg)}
+//		{
+//
+//		}
+//
+//		message_handler_t operator*() const
+//		{
+//			message_block_v2{header_size,
+//				file.to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg)),
+//				spec_defs::message_object_header_continuation_spec::length::get(msg)}
+//			return _cur;
+//		}
+//
+//		bool end() const
+//		{
+//			return _cur > _end;
+//		}
+//
+//		message_block_v2 & operator++() {
+//			object_commom::message_block_t::_cur += _header_size + spec_defs::message_header_v2_spec::size_of_message::get(object_commom::message_block_t::_cur);
+//			return *this;
+//		}
+//
+//	};
 
 	object_v2(file_impl * file, uint8_t * addr) : object_commom{file, addr} {
 		cout << "creating object v2, object cache size = TODO" << endl;
@@ -2319,14 +2443,6 @@ struct object_v2 : public object_commom {
 	}
 
 	virtual ~object_v2() { }
-
-	auto get_msg_block()
-	{
-		uint64_t offset = get_object_header_size();
-		// length - 4 because of checksum.
-		uint64_t length = get_reader_for(get_size_of_size_of_chunk())(&memory_addr[offset-get_size_of_size_of_chunk()]) - 4;
-		return message_block_v2(get_message_header_size(), &memory_addr[offset], length);
-	}
 
 	uint64_t get_message_header_size() const {
 		return spec_defs::message_header_v2_spec::size + (is_attribute_creation_order_tracked()?2:0);
@@ -2339,42 +2455,165 @@ struct object_v2 : public object_commom {
 				+ get_size_of_size_of_chunk();
 	}
 
+	struct message_iterator_t {
+		// TODO: check if message go out of block boundary.
+
+		file_impl * file;
+		bool has_creation_order;
+
+		struct block {
+			uint8_t * bgn; uint8_t * end;
+			block (uint8_t * bgn, uint64_t length) : bgn{bgn}, end{&bgn[length]} { }
+		};
+
+		list<block> message_block_queue;
+
+		uint8_t * _cur;
+		uint8_t * _end;
+
+		message_iterator_t(file_impl * file, bool has_creation_order, uint8_t * bgn, uint64_t length) :
+			file{file},
+			has_creation_order{has_creation_order}
+		{
+			_safe_append_block(bgn, length);
+			if (not message_block_queue.empty()) {
+				auto & block = message_block_queue.front();
+				_cur = block.bgn;
+				_end = block.end;
+			}
+		}
+
+		message_handler_t operator*() const {
+			message_handler_t ret = {
+				.type  = spec_defs::message_header_v2_spec::type::get(_cur),
+				.size  = spec_defs::message_header_v2_spec::size_of_message::get(_cur),
+				.flags = spec_defs::message_header_v2_spec::flags::get(_cur),
+				.data  = _cur + spec_defs::message_header_v2_spec::size + (has_creation_order?2:0)
+			};
+
+			if (ret.flags.test(1)) { // if the message is shared
+				ret.data = file->to_address(xparse_shared(ret.data));
+			}
+
+			return ret;
+
+		}
+
+		void _safe_append_block(uint8_t * bgn, uint64_t length) {
+			cout << "append block @" << bgn << " " << length << endl;
+			if (length > 0) {
+				message_block_queue.emplace_back(bgn, length);
+			}
+		}
+
+
+		message_iterator_t & operator++() {
+
+			for(;;) {
+				_cur += spec_defs::message_header_v2_spec::size
+					 +  (has_creation_order?2:0)
+					 +  spec_defs::message_header_v2_spec::size_of_message::get(_cur);
+
+				if ( _cur >= _end) {
+					message_block_queue.pop_front();
+					if (message_block_queue.empty()) // no more message to read.
+						break;
+					auto & block = message_block_queue.front();
+					_cur = block.bgn;
+					_end = block.end;
+				}
+
+				// if (not message_block_queue.empty()) implicitly.
+				auto msg = **this;
+
+				cout << "found message <@" << static_cast<void*>(msg.data)
+						<< " type=0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(msg.type) << std::hex
+						<< " size=" << msg.size
+						<< " flags=0b" << msg.flags << ">" << endl;
+
+				if (msg.type == MSG_OBJECT_HEADER_CONTINUATION) {
+					if (spec_defs::message_object_header_continuation_spec::length::get(msg.data) > 0) {
+						message_block_queue.emplace_back(
+								file->to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg.data)),
+								spec_defs::message_object_header_continuation_spec::length::get(msg.data)
+						);
+					}
+				} else {
+					break;
+				}
+
+			}
+
+			return *this;
+		}
+
+		bool end() const {
+			return message_block_queue.empty();
+		}
+
+	};
+
+	message_iterator_t get_message_iterator() const
+	{
+		uint64_t offset = get_object_header_size();
+		// length - 4 because of checksum.
+		uint64_t length = get_reader_for(get_size_of_size_of_chunk())(&memory_addr[offset-get_size_of_size_of_chunk()]) - 4;
+
+		cout << "message block @" << offset << " " << length << endl;
+
+		return message_iterator_t{file, is_attribute_creation_order_tracked(), &memory_addr[offset], length};
+
+	}
+
 	void parse_messages()
 	{
-		uint64_t const header_size = get_message_header_size();
-
-		list<message_block_v2> message_block_queue;
-
-		message_block_queue.push_back(get_msg_block());
-
-		while(!message_block_queue.empty()) {
-			for (auto msg = message_block_queue.front(); not msg.end(); ++msg) {
-				auto type = spec_defs::message_header_v2_spec::type::get(*msg);
-				auto flags = spec_defs::message_header_v2_spec::flags::get(*msg);
-				auto msg_data = *msg + spec_defs::message_header_v2_spec::size;
-
-				cout << "found message <@" << static_cast<void*>(msg_data)
-						<< " type=0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(type) << std::hex
-						<< " size=" << spec_defs::message_header_v2_spec::size_of_message::get(*msg)
-						<< " flags=0b" << make_bitset(flags) << ">" << endl;
-
-				if (flags&0x0000'0010u) {
-					// is shared message.
-
-					// FIXME: currently expect that MSG_OBJECT_HEADER_CONTINUATION cannot be shared
-					parse_shared(type, msg_data);
-
-				} else {
-					if (type == MSG_OBJECT_HEADER_CONTINUATION) {
-						message_block_queue.push_back(message_block_v2(header_size, *file, msg_data));
-					} else {
-						dispatch_message(type, msg_data);
-					}
-				}
-			}
-			message_block_queue.pop_front();
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			dispatch_message(msg.type, msg.data);
 		}
 	}
+
+//	virtual auto keys() const -> vector<char const *> override
+//	{
+//
+//		// TODO: go throught all messages.
+//
+//		if(symbol_table.group_btree_v1_root == undef_offset)
+//			return vector<char const *>{};
+//
+//		vector<char const *> ret;
+//		stack<group_btree_v1> stack;
+//
+//		vector<offset_type> group_symbole_tables;
+//		cout << "btree-root = " << std::hex << symbol_table.group_btree_v1_root << std::dec << endl;
+//		stack.push(group_btree_v1{file, file->to_address(symbol_table.group_btree_v1_root)});
+//		while(not stack.empty()) {
+//			group_btree_v1 cur = stack.top();
+//			cout << std::dec << "process node depth=" << cur.get_depth() << " entries_count=" << cur.get_entries_count() << endl;
+//			stack.pop();
+//			if (cur.get_depth() == 0) {
+//				//assert(cur.get_entries_count() <= lK);
+//				for(int i = 0; i < cur.get_entries_count(); ++i) {
+//					group_symbole_tables.push_back(cur.get_node(i));
+//				}
+//			} else {
+//				//assert(cur.get_entries_count() <= nK);
+//				for(int i = 0; i < cur.get_entries_count(); ++i) {
+//					stack.push(group_btree_v1{file, file->to_address(cur.get_node(i))});
+//				}
+//			}
+//		}
+//
+//		for(auto offset: group_symbole_tables) {
+//			group_symbol_table table{file->to_address(offset)};
+//			for(auto symbol_table_entry: table.get_symbole_entry_list()) {
+//				ret.push_back(_get_link_name(symbol_table_entry->link_name_offset()));
+//			}
+//		}
+//
+//		return ret;
+//
+//	}
 
 	uint8_t get_size_of_size_of_chunk() const {
 		return 1<<(0b0000'0011u&spec::flags::get(memory_addr));
