@@ -2018,7 +2018,7 @@ struct object_datalayout_t {
 			switch (datalayout.chunk_indexing_type) {
 				case CHUNK_INDEXING_BTREE_V1:
 					o << "datalayout.chunk_indexing_type = BTREE_V1" << endl;
-					o << "datalayout.chunk_btree_v1.data_address =" << datalayout.chunk_btree_v1.data_address << endl;
+					o << "datalayout.chunk_btree_v1.data_address = " << datalayout.chunk_btree_v1.data_address << endl;
 					break;
 				case CHUNK_INDEXING_SINGLE_CHUNK:
 					o << "datalayout.chunk_indexing_type = SINGLE_CHUNK" << endl;
