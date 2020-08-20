@@ -2372,7 +2372,8 @@ struct object_v1 : public object_commom {
 			}
 		}
 
-		object_message_handler_t operator*() const {
+		object_message_handler_t operator*() const
+		{
 			object_message_handler_t ret = {
 				.type  = spec_defs::message_header_v1_spec::type::get(_cur),
 				.size  = spec_defs::message_header_v1_spec::size_of_message::get(_cur),
@@ -2397,38 +2398,28 @@ struct object_v1 : public object_commom {
 
 		message_iterator_t & operator++() {
 
-			for(;;) {
-				_cur += spec_defs::message_header_v1_spec::size
-					 +  spec_defs::message_header_v1_spec::size_of_message::get(_cur);
+			// Check current message,
+			auto msg = **this;
 
-				if ( _cur >= _end) {
-					message_block_queue.pop_front();
-					if (message_block_queue.empty()) // no more message to read.
-						break;
-					auto & block = message_block_queue.front();
-					_cur = block.bgn;
-					_end = block.end;
+			if (msg.type == MSG_OBJECT_HEADER_CONTINUATION) {
+				if (spec_defs::message_object_header_continuation_spec::length::get(msg.data) > 0) {
+					message_block_queue.emplace_back(
+							file->to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg.data)),
+							spec_defs::message_object_header_continuation_spec::length::get(msg.data)
+					);
 				}
+			}
 
-				// if (not message_block_queue.empty()) implicitly.
-				auto msg = **this;
+			_cur += spec_defs::message_header_v1_spec::size
+				 +  spec_defs::message_header_v1_spec::size_of_message::get(_cur);
 
-//				cout << "found message <@" << static_cast<void*>(msg.data)
-//						<< " type=0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(msg.type) << std::hex
-//						<< " size=" << msg.size
-//						<< " flags=0b" << msg.flags << ">" << endl;
-
-				if (msg.type == MSG_OBJECT_HEADER_CONTINUATION) {
-					if (spec_defs::message_object_header_continuation_spec::length::get(msg.data) > 0) {
-						message_block_queue.emplace_back(
-								file->to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg.data)),
-								spec_defs::message_object_header_continuation_spec::length::get(msg.data)
-						);
-					}
-				} else {
-					break;
-				}
-
+			if ( _cur >= _end) {
+				message_block_queue.pop_front();
+				if (message_block_queue.empty()) // no more message to read.
+					return *this;
+				auto & block = message_block_queue.front();
+				_cur = block.bgn;
+				_end = block.end;
 			}
 
 			return *this;
@@ -2657,14 +2648,13 @@ struct object_v1 : public object_commom {
 				}
 				}
 			} else if (msg.type == MSG_ATTRIBUTE_INFO) {
+				cout << "WARNING: attribute info is not tested yet." << endl;
 				auto attribute_info = object_attribute_info_t(file, msg.data);
 				auto btree = btree_v2_header<typename spec_defs::btree_v2_record_type8>(file, file->to_address(attribute_info.attribute_name_btree_address));
 				auto xx = btree.list_records();
-				cout << "XXXXX" << endl;
 				for(auto i: xx) {
 					cout << (void*)i << endl;
 				}
-				cout << "TTTTT" << endl;
 			}
 		}
 
@@ -2739,7 +2729,7 @@ struct object_v2 : public object_commom {
 		// TODO: check if message go out of block boundary.
 
 		file_impl * file;
-		bool has_creation_order;
+		uint64_t header_size;
 
 		struct block {
 			uint8_t * bgn; uint8_t * end;
@@ -2751,9 +2741,9 @@ struct object_v2 : public object_commom {
 		uint8_t * _cur;
 		uint8_t * _end;
 
-		message_iterator_t(file_impl * file, bool has_creation_order, uint8_t * bgn, uint64_t length) :
+		message_iterator_t(file_impl * file, uint64_t header_size, uint8_t * bgn, uint64_t length) :
 			file{file},
-			has_creation_order{has_creation_order}
+			header_size{header_size}
 		{
 			_safe_append_block(bgn, length);
 			if (not message_block_queue.empty()) {
@@ -2768,7 +2758,7 @@ struct object_v2 : public object_commom {
 				.type  = spec_defs::message_header_v2_spec::type::get(_cur),
 				.size  = spec_defs::message_header_v2_spec::size_of_message::get(_cur),
 				.flags = spec_defs::message_header_v2_spec::flags::get(_cur),
-				.data  = _cur + spec_defs::message_header_v2_spec::size + (has_creation_order?2:0)
+				.data  = _cur + header_size
 			};
 
 			if (ret.flags.test(1)) { // if the message is shared
@@ -2789,39 +2779,27 @@ struct object_v2 : public object_commom {
 
 		message_iterator_t & operator++() {
 
-			for(;;) {
-				_cur += spec_defs::message_header_v2_spec::size
-					 +  (has_creation_order?2:0)
-					 +  spec_defs::message_header_v2_spec::size_of_message::get(_cur);
+			auto msg = **this;
 
-				if ( _cur >= _end) {
-					message_block_queue.pop_front();
-					if (message_block_queue.empty()) // no more message to read.
-						break;
-					auto & block = message_block_queue.front();
-					_cur = block.bgn;
-					_end = block.end;
+			if (msg.type == MSG_OBJECT_HEADER_CONTINUATION) {
+				if (spec_defs::message_object_header_continuation_spec::length::get(msg.data) > 0) {
+					message_block_queue.emplace_back(
+							file->to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg.data)),
+							spec_defs::message_object_header_continuation_spec::length::get(msg.data)
+					);
 				}
+			}
 
-				// if (not message_block_queue.empty()) implicitly.
-				auto msg = **this;
+			_cur += header_size
+				 +  spec_defs::message_header_v2_spec::size_of_message::get(_cur);
 
-//				cout << "found message <@" << static_cast<void*>(msg.data)
-//						<< " type=0x" << std::hex << std::setw(4) << std::setfill('0') << static_cast<int>(msg.type) << std::hex
-//						<< " size=" << msg.size
-//						<< " flags=0b" << msg.flags << ">" << endl;
-
-				if (msg.type == MSG_OBJECT_HEADER_CONTINUATION) {
-					if (spec_defs::message_object_header_continuation_spec::length::get(msg.data) > 0) {
-						message_block_queue.emplace_back(
-								file->to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg.data)),
-								spec_defs::message_object_header_continuation_spec::length::get(msg.data)
-						);
-					}
-				} else {
-					break;
-				}
-
+			if ( _cur >= _end) {
+				message_block_queue.pop_front();
+				if (message_block_queue.empty()) // no more message to read.
+					return *this;
+				auto & block = message_block_queue.front();
+				_cur = block.bgn;
+				_end = block.end;
 			}
 
 			return *this;
@@ -2839,7 +2817,7 @@ struct object_v2 : public object_commom {
 		// length - 4 because of checksum.
 		uint64_t length = get_reader_for(get_size_of_size_of_chunk())(&memory_addr[offset-get_size_of_size_of_chunk()]) - 4;
 
-		return message_iterator_t{file, is_attribute_creation_order_tracked(), &memory_addr[offset], length};
+		return message_iterator_t{file, spec_defs::message_header_v2_spec::size + (is_attribute_creation_order_tracked()?2:0), &memory_addr[offset], length};
 
 	}
 
