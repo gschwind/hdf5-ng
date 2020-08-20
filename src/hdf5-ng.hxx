@@ -234,27 +234,14 @@ static inline data_reader_func get_reader_for(uint8_t size) {
  * HIGH LEVEL API
  *****************************************************/
 
-struct file_impl;
+struct file_handler_interface;
 
-struct file_object {
-	file_impl * file;
-	uint8_t * memory_addr;
+struct superblock_interface;
+struct object_interface;
 
-	file_object() = delete;
-	file_object(file_impl * file, uint8_t * addr) : file{file}, memory_addr{addr} { }
-	virtual ~file_object() { }
-};
+struct superblock_interface {
 
-struct superblock;
-struct object;
-struct local_heap;
-struct global_heap;
-
-struct superblock : public file_object {
-
-	superblock(file_impl * file, uint8_t * addr) : file_object{file, addr} {}
-
-	virtual ~superblock() = default;
+	virtual ~superblock_interface() = default;
 
 	virtual int version() = 0;
 	virtual int offset_size() = 0;
@@ -269,7 +256,7 @@ struct superblock : public file_object {
 	virtual uint64_t driver_information_address() = 0;
 	virtual uint64_t root_node_object_address() = 0;
 
-	virtual shared_ptr<object> get_root_object() = 0;
+	virtual shared_ptr<object_interface> get_root_object() = 0;
 
 };
 
@@ -286,7 +273,7 @@ enum dataset_layout_e {
 
 
 
-struct btree : public file_object {
+struct btree {
 
 	virtual ~btree() = default;
 	virtual int version() = 0;
@@ -297,11 +284,9 @@ struct btree : public file_object {
 //  - superblock extension
 //  - dataset
 //  - group
-struct object : public file_object, public _h5obj {
+struct object_interface : public _h5obj {
 
-	object(file_impl * file, uint8_t * addr) : file_object{file, addr} { }
-
-	virtual ~object() = default;
+	virtual ~object_interface() = default;
 
 	virtual auto get_id() const -> uint64_t override {
 		throw EXCEPTION("Not implemented");
@@ -588,7 +573,7 @@ struct object : public file_object, public _h5obj {
 
 	template<typename ... ARGS>
 	struct _dispatch_read<void *, ARGS...> {
-		static void exec(object * obj, void * output, ARGS ... args) {
+		static void exec(object_interface * obj, void * output, ARGS ... args) {
 			obj->_read(array<slc, sizeof...(ARGS)>{slc{args}...}, output);
 		}
 	};
@@ -600,50 +585,14 @@ struct object : public file_object, public _h5obj {
 
 };
 
+struct file_handler_interface {
+	virtual ~file_handler_interface() = default;
 
-struct local_heap : public file_object {
+	virtual auto get_superblock() -> shared_ptr<superblock_interface> = 0;
 
-	local_heap(file_impl * file, uint8_t * addr) : file_object{file, addr} { }
+	virtual auto make_superblock(uint64_t offset) -> shared_ptr<superblock_interface> = 0;
+	virtual auto make_object(uint64_t offset) -> shared_ptr<object_interface> = 0;
 
-	virtual ~local_heap() = default;
-
-	virtual uint8_t * get_data(uint64_t offset) const = 0;
-
-};
-
-
-struct global_heap : public file_object {
-
-	virtual ~global_heap() = default;
-	virtual int version() = 0;
-
-};
-
-struct object_data : public file_object {
-
-	virtual ~object_data() = default;
-	virtual int version() = 0;
-
-};
-
-struct free_space : public file_object {
-
-	virtual ~free_space() = default;
-	virtual int version() = 0;
-
-};
-
-struct file_impl {
-	virtual ~file_impl() = default;
-	virtual shared_ptr<superblock> get_superblock() = 0;
-	virtual auto make_superblock(uint64_t offset) -> shared_ptr<superblock> = 0;
-	virtual auto make_btree(uint64_t offset) -> shared_ptr<btree> = 0;
-	virtual auto make_object(uint64_t offset) -> shared_ptr<object> = 0;
-	virtual auto make_local_heap(uint64_t offset) -> shared_ptr<local_heap> = 0;
-	virtual auto make_global_heap(uint64_t offset) -> shared_ptr<global_heap> = 0;
-
-	virtual auto to_address(uint64_t offset) -> uint8_t * = 0;
-	virtual auto to_offset(uint8_t * address) -> uint64_t = 0;
 };
 
 template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH>
@@ -668,10 +617,59 @@ static uint64_t get_minimum_storage_size_for(uint64_t count) {
 	return n;
 }
 
-struct superblock_v0 : public superblock {
+struct file_handler_t : public h5ng::file_handler_interface {
+	mutable map<uint64_t, shared_ptr<superblock_interface>> superblock_cache;
+	mutable map<uint64_t, shared_ptr<object_interface>> object_cache;
+
+	uint8_t * memaddr;
+
+	int version;
+	uint64_t superblock_offset;
+
+	file_handler_t(uint8_t * memaddr, uint64_t superblock_offset, int version) :
+		memaddr{memaddr},
+		version{version},
+		superblock_offset{superblock_offset}
+	{
+
+	}
+
+	auto to_address(uint64_t offset) -> uint8_t * {
+		return &memaddr[offset];
+	}
+
+	auto to_offset(uint8_t * address) -> uint64_t {
+		return address-memaddr;
+	}
+
+	virtual auto get_superblock() -> shared_ptr<superblock_interface> override
+	{
+		return make_superblock(superblock_offset);
+	}
+
+	// h5ng::file_handler_interface
+
+	virtual auto make_superblock(uint64_t offset) -> shared_ptr<superblock_interface> override;
+	virtual auto make_object(uint64_t offset) -> shared_ptr<object_interface> override;
+
+};
+
+struct object {
+	file_handler_t * file;
+	uint8_t * memory_addr;
+
+	object() = delete;
+	object(file_handler_t * file, uint8_t * memory_addr) : file{file}, memory_addr{memory_addr} { }
+
+};
+
+struct superblock_v0 : public object, public superblock_interface {
 	using spec = typename spec_defs::superblock_v0_spec;
 
-	superblock_v0(file_impl * file, uint8_t * addr) : superblock{file, addr} { }
+	using object::file;
+	using object::memory_addr;
+
+	superblock_v0(file_handler_t * file, uint8_t * addr) : object{file, addr} { }
 
 	virtual int version() {
 		return spec::superblock_version::get(memory_addr);
@@ -720,16 +718,19 @@ struct superblock_v0 : public superblock {
 		return reinterpret_cast<group_symbol_table_entry*>(&spec::root_group_symbol_table_entry::get(memory_addr))->offset_header_address();
 	}
 
-	virtual shared_ptr<object> get_root_object() {
+	virtual shared_ptr<object_interface> get_root_object() {
 		return file->make_object(root_node_object_address());
 	}
 
 };
 
-struct superblock_v1 : public superblock {
+struct superblock_v1 : public object, public superblock_interface {
 	using spec = typename spec_defs::superblock_v1_spec;
 
-	superblock_v1(file_impl * file, uint8_t * addr) : superblock{file, addr} { }
+	using object::file;
+	using object::memory_addr;
+
+	superblock_v1(file_handler_t * file, uint8_t * addr) : object{file, addr} { }
 
 	virtual int version() {
 		return spec::superblock_version::get(memory_addr);
@@ -778,7 +779,7 @@ struct superblock_v1 : public superblock {
 		return reinterpret_cast<group_symbol_table_entry*>(&spec::root_group_symbol_table_entry::get(memory_addr))->offset_header_address();
 	}
 
-	virtual shared_ptr<object> get_root_object() {
+	virtual shared_ptr<object_interface> get_root_object() {
 		return file->make_object(root_node_object_address());
 	}
 
@@ -789,10 +790,13 @@ struct superblock_v1 : public superblock {
 
 };
 
-struct superblock_v2 : public superblock {
+struct superblock_v2 : public object, public superblock_interface {
 	using spec = typename spec_defs::superblock_v2_spec;
 
-	superblock_v2(file_impl * file, uint8_t * addr) : superblock{file, addr} { }
+	using object::file;
+	using object::memory_addr;
+
+	superblock_v2(file_handler_t * file, uint8_t * addr) : object{file, addr} { }
 
 	virtual int version() {
 		return spec::superblock_version::get(memory_addr);
@@ -841,16 +845,19 @@ struct superblock_v2 : public superblock {
 		return spec::root_group_object_header_address::get(memory_addr);
 	}
 
-	virtual shared_ptr<object> get_root_object() {
+	virtual shared_ptr<object_interface> get_root_object() {
 		return file->make_object(root_node_object_address());
 	}
 
 };
 
-struct superblock_v3 : public superblock {
+struct superblock_v3 : public object, public superblock_interface {
 	using spec = typename spec_defs::superblock_v3_spec;
 
-	superblock_v3(file_impl * file, uint8_t * addr) : superblock{file, addr} { }
+	using object::file;
+	using object::memory_addr;
+
+	superblock_v3(file_handler_t * file, uint8_t * addr) : object{file, addr} { }
 
 	virtual int version() {
 		return spec::superblock_version::get(memory_addr);
@@ -899,18 +906,21 @@ struct superblock_v3 : public superblock {
 		return spec::root_group_object_header_address::get(memory_addr);
 	}
 
-	virtual shared_ptr<object> get_root_object() {
+	virtual shared_ptr<object_interface> get_root_object() {
 		return file->make_object(root_node_object_address());
 	}
 
 };
 
-struct local_heap_v0 : public local_heap {
+struct local_heap_v0 : public object {
 	using spec = typename spec_defs::local_heap_spec;
 
-	local_heap_v0(file_impl * file, uint8_t * addr) : local_heap{file, addr} { }
+	using object::file;
+	using object::memory_addr;
 
-	virtual auto get_data(uint64_t offset) const -> uint8_t *
+	local_heap_v0(file_handler_t * file, uint8_t * addr) : object{file, addr} { }
+
+	auto get_data(uint64_t offset) const -> uint8_t *
 	{
 		return file->to_address(spec::data_segment_address::get(memory_addr))+offset;
 	}
@@ -937,14 +947,17 @@ struct b_tree_xxx_t {
 };
 
 template<typename NODE_TYPE>
-struct btree_v2_node : public file_object {
+struct btree_v2_node : public object {
 	using spec = typename spec_defs::b_tree_v2_node_spec;
+
+	using object::file;
+	using object::memory_addr;
 
 	b_tree_xxx_t const & layout;
 	uint64_t child_node_count;
 
-	btree_v2_node(file_impl * file, uint8_t * addr, b_tree_xxx_t const & layout, uint64_t child_node_count) :
-		file_object{file, addr}, layout{layout}, child_node_count{child_node_count} { }
+	btree_v2_node(file_handler_t * file, uint8_t * addr, b_tree_xxx_t const & layout, uint64_t child_node_count) :
+		object{file, addr}, layout{layout}, child_node_count{child_node_count} { }
 	btree_v2_node(btree_v2_node const &) = default;
 	btree_v2_node & operator=(btree_v2_node const & x) = default;
 
@@ -988,9 +1001,13 @@ struct btree_v2_node : public file_object {
 };
 
 template<typename NOTE_TYPE>
-struct btree_v2_header : public file_object {
+struct btree_v2_header : public object {
 	using spec = typename spec_defs::b_tree_v2_hdr_spec;
-	btree_v2_header(file_impl * file, uint8_t * addr) : file_object{file, addr} { }
+
+	using object::file;
+	using object::memory_addr;
+
+	btree_v2_header(file_handler_t * file, uint8_t * addr) : object{file, addr} { }
 	btree_v2_header(btree_v2_header const &) = default;
 	btree_v2_header & operator=(btree_v2_header const & x) = default;
 
@@ -1137,11 +1154,15 @@ struct btree_v2_header : public file_object {
 
 };
 
-struct btree_v1 : public file_object {
+struct btree_v1 : public object {
 	using spec = typename spec_defs::b_tree_v1_hdr_spec;
+
+	using object::file;
+	using object::memory_addr;
+
 	uint64_t key_length;
 
-	btree_v1(file_impl * file, uint8_t * addr, uint64_t key_length) : file_object{file, addr}, key_length{key_length} { }
+	btree_v1(file_handler_t * file, uint8_t * addr, uint64_t key_length) : object{file, addr}, key_length{key_length} { }
 
 	btree_v1(btree_v1 const &) = default;
 
@@ -1174,7 +1195,7 @@ struct btree_v1 : public file_object {
 
 struct group_btree_v1 : public btree_v1 {
 
-	group_btree_v1(file_impl * file, uint8_t * addr) : btree_v1{file, addr, SIZE_OF_LENGTH} { }
+	group_btree_v1(file_handler_t * file, uint8_t * addr) : btree_v1{file, addr, SIZE_OF_LENGTH} { }
 	group_btree_v1(group_btree_v1 const &) = default;
 	group_btree_v1 & operator=(group_btree_v1 const &) = default;
 
@@ -1187,7 +1208,7 @@ struct group_btree_v1 : public btree_v1 {
 
 struct chunk_btree_v1 : public btree_v1 {
 
-	chunk_btree_v1(file_impl * file, uint8_t * addr, uint64_t dimensionality) : btree_v1{file, addr, 8+8*(dimensionality)} { }
+	chunk_btree_v1(file_handler_t * file, uint8_t * addr, uint64_t dimensionality) : btree_v1{file, addr, 8+8*(dimensionality)} { }
 	chunk_btree_v1(chunk_btree_v1 const &) = default;
 	chunk_btree_v1 & operator=(chunk_btree_v1 const &) = default;
 
@@ -1327,11 +1348,13 @@ struct group_btree_v2_node {
 
 
 template<typename record_spec>
-struct group_btree_v2 : public file_object {
+struct group_btree_v2 : public object {
+
+	using object::file;
+	using object::memory_addr;
+
 	using spec = typename spec_defs::b_tree_v2_hdr_spec;
 	using node_type = group_btree_v2_node<record_spec>;
-
-	map<uint64_t, shared_ptr<node_type>> _node_tree_cache;
 
 	group_btree_v2(uint8_t * addr) {
 		this->memory_addr = addr;
@@ -1395,13 +1418,13 @@ struct object_message_handler_t {
 
 
 struct object_symbol_table_t {
-	file_impl * file;
+	file_handler_t * file;
 
 	offset_type lheap;
 	offset_type group_btree_v1_root;
 
 	// Create the symbole table from message.
-	object_symbol_table_t(file_impl * file, uint8_t * msg) : file{file}
+	object_symbol_table_t(file_handler_t * file, uint8_t * msg) : file{file}
 	{
 		cout << "parse_symbol_table " << std::dec
 				<< spec_defs::message_symbole_table_spec::local_heap_address::get(msg) << " "
@@ -1511,7 +1534,7 @@ struct object_symbol_table_t {
 
 // Attributes info
 struct object_attribute_info_t {
-	file_impl * file;
+	file_handler_t * file;
 
 	uint64_t maximum_creation_index;
 	uint64_t fractal_heap_address;
@@ -1519,7 +1542,7 @@ struct object_attribute_info_t {
 	uint64_t attribute_creation_order_btree_address;
 
 
-	object_attribute_info_t(file_impl * file, uint8_t * msg) : file{file}
+	object_attribute_info_t(file_handler_t * file, uint8_t * msg) : file{file}
 	{
 		auto flags = make_bitset(spec_defs::message_attribute_info_spec::flags::get(msg));
 		auto cur = addr_reader{msg+spec_defs::message_attribute_info_spec::size};
@@ -1637,7 +1660,7 @@ struct object_dataspace_t {
 };
 
 struct object_datalayout_t {
-	file_impl * file;
+	file_handler_t * file;
 
 	uint8_t version;
 
@@ -1724,7 +1747,7 @@ struct object_datalayout_t {
 	// TODO: VIRTUAL LAYOUT
 
 
-	object_datalayout_t(file_impl * file, uint8_t * msg) : file{file}
+	object_datalayout_t(file_handler_t * file, uint8_t * msg) : file{file}
 	{
 	//		cout << "parse_datalayout " << std::dec <<
 	//				" version=" << static_cast<unsigned>(spec_defs::message_data_layout_v1_spec::version::get(msg)) <<
@@ -1971,8 +1994,11 @@ struct object_datalayout_t {
 
 
 
-struct object_commom : public object
+struct object_commom : public object, public object_interface
 {
+
+	using object::file;
+	using object::memory_addr;
 
 	struct {
 		uint32_t * size_of_elements;
@@ -2253,7 +2279,7 @@ struct object_commom : public object
 
 	}
 
-	object_commom(file_impl * file, uint8_t * addr) : object{file, addr}
+	object_commom(file_handler_t * file, uint8_t * addr) : object{file, addr}
 	{
 		_modification_time = 0;
 		_comment = nullptr;
@@ -2334,8 +2360,9 @@ struct object_commom : public object
 };
 
 struct object_v1 : public object_commom {
-	using file_object::file;
-	using file_object::memory_addr;
+
+	using object::file;
+	using object::memory_addr;
 
 	using object_commom::datatype;
 	using object_commom::fillvalue;
@@ -2349,7 +2376,7 @@ struct object_v1 : public object_commom {
 
 	struct message_iterator_t {
 		// TODO: check if message go out of block boundary.
-		file_impl * file;
+		file_handler_t * file;
 
 		struct block {
 			uint8_t * bgn; uint8_t * end;
@@ -2361,7 +2388,7 @@ struct object_v1 : public object_commom {
 		uint8_t * _cur;
 		uint8_t * _end;
 
-		message_iterator_t(file_impl * file, uint8_t * bgn, uint64_t length) :
+		message_iterator_t(file_handler_t * file, uint8_t * bgn, uint64_t length) :
 			file{file}
 		{
 			_safe_append_block(bgn, length);
@@ -2446,7 +2473,7 @@ struct object_v1 : public object_commom {
 
 	using spec = typename spec_defs::object_header_v1_spec;
 
-	object_v1(file_impl * file, uint8_t * addr) : object_commom{file, addr}
+	object_v1(file_handler_t * file, uint8_t * addr) : object_commom{file, addr}
 	{
 		cout << "creating object v1, object cache size = TODO" << endl;
 		parse_messages();
@@ -2695,8 +2722,8 @@ struct object_v1 : public object_commom {
 struct object_v2 : public object_commom {
 	using spec = typename spec_defs::object_header_v2_spec;
 
-	using file_object::file;
-	using file_object::memory_addr;
+	using object::file;
+	using object::memory_addr;
 
 	using object_commom::datatype;
 	using object_commom::fillvalue;
@@ -2707,7 +2734,7 @@ struct object_v2 : public object_commom {
 	using object_commom::xparse_shared;
 	using object_commom::parse_link;
 
-	object_v2(file_impl * file, uint8_t * addr) : object_commom{file, addr} {
+	object_v2(file_handler_t * file, uint8_t * addr) : object_commom{file, addr} {
 		cout << "creating object v2, object cache size = TODO" << endl;
 		parse_messages();
 	}
@@ -2728,7 +2755,7 @@ struct object_v2 : public object_commom {
 	struct message_iterator_t {
 		// TODO: check if message go out of block boundary.
 
-		file_impl * file;
+		file_handler_t * file;
 		uint64_t header_size;
 
 		struct block {
@@ -2741,7 +2768,7 @@ struct object_v2 : public object_commom {
 		uint8_t * _cur;
 		uint8_t * _end;
 
-		message_iterator_t(file_impl * file, uint64_t header_size, uint8_t * bgn, uint64_t length) :
+		message_iterator_t(file_handler_t * file, uint64_t header_size, uint8_t * bgn, uint64_t length) :
 			file{file},
 			header_size{header_size}
 		{
@@ -2996,101 +3023,54 @@ struct object_v2 : public object_commom {
 
 };
 
-
-struct file_impl : public h5ng::file_impl {
-	mutable map<uint64_t, shared_ptr<superblock>> superblock_cache;
-	mutable map<uint64_t, shared_ptr<object>> object_cache;
-	mutable map<uint64_t, shared_ptr<local_heap>> local_heap_cache;
-	mutable map<uint64_t, shared_ptr<btree>> btree_cache;
-
-	uint8_t * data;
-	int version;
-	uint64_t superblock_offset;
-
-	file_impl(uint8_t * data, uint64_t superblock_offset, int version) :
-		data{data},
-		version{version},
-		superblock_offset{superblock_offset}
-	{
-
-	}
-
-	virtual auto make_superblock(uint64_t offset) -> shared_ptr<superblock>
-	{
-		auto x = superblock_cache.find(offset);
-		if (x != superblock_cache.end())
-			return dynamic_pointer_cast<superblock>(x->second);
-
-		switch(version) {
-		case 0:
-			return superblock_cache[offset] = make_shared<superblock_v0>(this, &data[offset]);
-		case 1:
-			return superblock_cache[offset] = make_shared<superblock_v1>(this, &data[offset]);
-		case 2:
-			return superblock_cache[offset] = make_shared<superblock_v2>(this, &data[offset]);
-		case 3:
-			return superblock_cache[offset] = make_shared<superblock_v3>(this, &data[offset]);
-		}
-
-		throw runtime_error("TODO" STR(__LINE__));
-
-	}
-
-	shared_ptr<superblock> get_superblock() {
-		return make_superblock(superblock_offset);
-	}
-
-	virtual auto make_object(uint64_t offset) -> shared_ptr<object> {
-		auto x = object_cache.find(offset);
-		if (x != object_cache.end())
-			return x->second;
-
-		int version = data[offset+OFFSET_V1_OBJECT_HEADER_VERSION];
-		if (version == 1) {
-			cout << "creating object at " << std::hex << offset << endl;
-			return (object_cache[offset] = make_shared<object_v1>(this, &data[offset]));
-		} else if (version == 'O') {
-			uint32_t sign = *reinterpret_cast<uint32_t*>(&data[offset]);
-			if (sign != 0x5244484ful)
-				throw EXCEPTION("Unexpected signature (0x%08x)", sign);
-			version = data[offset+OFFSET_V2_OBJECT_HEADER_VERSION];
-			if (version != 2)
-				throw EXCEPTION("Not implemented object version %d", version);
-			cout << "creating object at " << std::hex << offset << endl;
-			return (object_cache[offset] = make_shared<object_v2>(this, &data[offset]));
-		}
-
-		throw runtime_error("TODO " STR(__LINE__));
-	}
-
-
-	virtual auto make_btree(uint64_t offset) -> shared_ptr<btree> {
-		throw runtime_error("TODO " STR(__LINE__));
-	}
-
-	virtual auto make_local_heap(uint64_t offset) -> shared_ptr<local_heap> {
-		auto x = local_heap_cache.find(offset);
-		if (x != local_heap_cache.end())
-			return x->second;
-		return (local_heap_cache[offset] = make_shared<local_heap_v0>(this, &data[offset]));
-	}
-
-	virtual auto make_global_heap(uint64_t offset) -> shared_ptr<global_heap> {
-		throw runtime_error("TODO " STR(__LINE__));
-	}
-
-	virtual auto to_address(uint64_t offset) -> uint8_t * override {
-		return &data[offset];
-	}
-
-	virtual auto to_offset(uint8_t * address) -> uint64_t override {
-		return address-data;
-	}
-
 }; // struct _impl
 
-};
+template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH>
+auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::file_handler_t::make_superblock(uint64_t offset) -> shared_ptr<superblock_interface>
+{
+	auto x = superblock_cache.find(offset);
+	if (x != superblock_cache.end())
+		return dynamic_pointer_cast<superblock_interface>(x->second);
 
+	switch(version) {
+	case 0:
+		return superblock_cache[offset] = make_shared<superblock_v0>(this, &memaddr[offset]);
+	case 1:
+		return superblock_cache[offset] = make_shared<superblock_v1>(this, &memaddr[offset]);
+	case 2:
+		return superblock_cache[offset] = make_shared<superblock_v2>(this, &memaddr[offset]);
+	case 3:
+		return superblock_cache[offset] = make_shared<superblock_v3>(this, &memaddr[offset]);
+	}
+
+	throw runtime_error("TODO" STR(__LINE__));
+
+}
+
+template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH>
+auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::file_handler_t::make_object(uint64_t offset) -> shared_ptr<object_interface>
+{
+	auto x = object_cache.find(offset);
+	if (x != object_cache.end())
+		return x->second;
+
+	int version = memaddr[offset+OFFSET_V1_OBJECT_HEADER_VERSION];
+	if (version == 1) {
+		cout << "creating object at " << std::hex << offset << endl;
+		return (object_cache[offset] = make_shared<object_v1>(this, &memaddr[offset]));
+	} else if (version == 'O') {
+		uint32_t sign = *reinterpret_cast<uint32_t*>(&memaddr[offset]);
+		if (sign != 0x5244484ful)
+			throw EXCEPTION("Unexpected signature (0x%08x)", sign);
+		version = memaddr[offset+OFFSET_V2_OBJECT_HEADER_VERSION];
+		if (version != 2)
+			throw EXCEPTION("Not implemented object version %d", version);
+		cout << "creating object at " << std::hex << offset << endl;
+		return (object_cache[offset] = make_shared<object_v2>(this, &memaddr[offset]));
+	}
+
+	throw runtime_error("TODO " STR(__LINE__));
+}
 
 template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH> template <typename record_type>
 _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::group_btree_v2_node<record_type>::group_btree_v2_node(group_btree_v2<record_type> * root, uint8_t * memory_addr, uint64_t record_count, uint64_t depth) :
@@ -3135,16 +3115,16 @@ auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::group_btree_v2_node<record_type>::ge
 	return *reinterpret_cast<offset_type*>(&memory_addr[spec::size+i*(root->record_size()+size_of_number_of_child_node+size_of_total_number_of_child_node)+root->record_size()+size_of_number_of_child_node]);
 }
 
-struct superblock;
+struct superblock_interface;
 
 template<int ... ARGS>
 struct _for_each1;
 
 template<int J, int I, int ... ARGS>
 struct _for_each1<J, I, ARGS...> {
-	static shared_ptr<file_impl> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_length) {
+	static shared_ptr<file_handler_interface> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_length) {
 		if (I == size_of_length) {
-			return make_shared<typename _impl<J, I>::file_impl>(data, superblock_offset, version);
+			return make_shared<typename _impl<J, I>::file_handler_t>(data, superblock_offset, version);
 		} else {
 			return _for_each1<J, ARGS...>::create(data, version, superblock_offset, size_of_length);
 		}
@@ -3153,7 +3133,7 @@ struct _for_each1<J, I, ARGS...> {
 
 template<int J>
 struct _for_each1<J> {
-	static shared_ptr<file_impl> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_length) {
+	static shared_ptr<file_handler_interface> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_length) {
 		throw runtime_error("TODO" STR(__LINE__));
 	}
 };
@@ -3163,7 +3143,7 @@ struct _for_each0;
 
 template<int J, int ... ARGS>
 struct _for_each0<J, ARGS...> {
-	static shared_ptr<file_impl> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_offset, int size_of_length) {
+	static shared_ptr<file_handler_interface> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_offset, int size_of_length) {
 		if (J == size_of_offset) {
 			return _for_each1<J,2,4,8>::create(data, version, superblock_offset, size_of_length);
 		} else {
@@ -3174,7 +3154,7 @@ struct _for_each0<J, ARGS...> {
 
 template<>
 struct _for_each0<> {
-	static shared_ptr<file_impl> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_offset, int size_of_length) {
+	static shared_ptr<file_handler_interface> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_offset, int size_of_length) {
 		throw runtime_error("TODO" STR(__LINE__));
 	}
 };
@@ -3212,7 +3192,7 @@ struct _h5file : public _h5obj {
 	int fd;
 	uint8_t * data;
 	uint64_t file_size;
-	shared_ptr<file_impl> _file_impl;
+	shared_ptr<file_handler_interface> _file_impl;
 	shared_ptr<_h5obj> _root_object;
 
 	template<typename T>
@@ -3344,7 +3324,7 @@ struct _h5file : public _h5obj {
 
 template<typename ... ARGS>
 void h5obj::read(ARGS ... args) {
-	dynamic_pointer_cast<object>(_ptr)->_read_0(args...);
+	dynamic_pointer_cast<object_interface>(_ptr)->_read_0(args...);
 }
 
 } // hdf5ng
