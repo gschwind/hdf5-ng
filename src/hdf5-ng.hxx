@@ -2359,6 +2359,138 @@ struct object_commom : public object, public object_interface
 
 };
 
+
+struct object_v1_trait : public object_commom {
+	using spec = typename spec_defs::object_header_v1_spec;
+
+	using object::file;
+	using object::memory_addr;
+
+	using object_commom::xparse_shared;
+	using object_commom::dispatch_message;
+
+	object_v1_trait(file_handler_t * file, uint8_t * memory_addr) : object_commom{file, memory_addr}
+	{
+		cout << "Creating object v1" << endl;
+	}
+
+	struct message_iterator_t {
+		using message_spec = typename spec_defs::message_header_v1_spec;
+
+		// TODO: check if message go out of block boundary.
+		file_handler_t * file;
+
+		struct block {
+			uint8_t * bgn; uint8_t * end;
+			block (uint8_t * bgn, uint64_t length) : bgn{bgn}, end{&bgn[length]} { }
+		};
+
+		list<block> message_block_queue;
+
+		uint8_t * _cur;
+		uint8_t * _end;
+
+		message_iterator_t(file_handler_t * file, uint8_t * bgn, uint64_t length) :
+			file{file}
+		{
+			_safe_append_block(bgn, length);
+			if (not message_block_queue.empty()) {
+				auto & block = message_block_queue.front();
+				_cur = block.bgn;
+				_end = block.end;
+			}
+		}
+
+		object_message_handler_t operator*() const
+		{
+			object_message_handler_t ret = {
+				.type  = message_spec::type::get(_cur),
+				.size  = message_spec::size_of_message::get(_cur),
+				.flags = message_spec::flags::get(_cur),
+				.data  = _cur + message_spec::size
+			};
+
+			if (ret.flags.test(1)) { // if the message is shared
+				ret.data = file->to_address(xparse_shared(ret.data));
+			}
+
+			return ret;
+
+		}
+
+		void _safe_append_block(uint8_t * bgn, uint64_t length)
+		{
+			if (length > 0) {
+				message_block_queue.emplace_back(bgn, length);
+			}
+		}
+
+		message_iterator_t & operator++() {
+
+			// Check current message,
+			auto msg = **this;
+
+			if (msg.type == MSG_OBJECT_HEADER_CONTINUATION) {
+				if (spec_defs::message_object_header_continuation_spec::length::get(msg.data) > 0) {
+					message_block_queue.emplace_back(
+							file->to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg.data)),
+							spec_defs::message_object_header_continuation_spec::length::get(msg.data)
+					);
+				}
+			}
+
+			_cur += message_spec::size
+				 +  message_spec::size_of_message::get(_cur);
+
+			if ( _cur >= _end) {
+				message_block_queue.pop_front();
+				if (message_block_queue.empty()) // no more message to read.
+					return *this;
+				auto & block = message_block_queue.front();
+				_cur = block.bgn;
+				_end = block.end;
+			}
+
+			return *this;
+		}
+
+		bool end() const {
+			return message_block_queue.empty();
+		}
+
+	};
+
+
+	message_iterator_t get_message_iterator() const
+	{
+		uint64_t offset = file->to_offset(&memory_addr[spec::size]);
+		uint64_t align_offset =  align_forward<8>(offset);
+
+		// length - 4 because of checksum.
+		uint64_t length = spec::header_size::get(memory_addr);
+
+		return message_iterator_t{file, file->to_address(align_offset), length-(align_offset-offset)};
+
+	}
+
+	void parse_messages()
+	{
+		uint64_t msg_count = spec::total_number_of_header_message::get(memory_addr);
+		cout << "parsing "<< msg_count <<" messages" << endl;
+		cout << "object header size = " << spec::header_size::get(memory_addr) << endl;
+
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			dispatch_message(msg.type, msg.data);
+			--msg_count;
+		}
+
+		if (msg_count != 0)
+			throw EXCEPTION("Message count is invalid (%d)", msg_count);
+	}
+
+};
+
 struct object_v1 : public object_commom {
 
 	using object::file;
@@ -2718,6 +2850,205 @@ struct object_v1 : public object_commom {
 
 };
 
+struct object_v2_trait : public object_commom {
+	using spec = typename spec_defs::object_header_v2_spec;
+
+	using object::file;
+	using object::memory_addr;
+
+	using object_commom::xparse_shared;
+	using object_commom::dispatch_message;
+
+	object_v2_trait(file_handler_t * file, uint8_t * memory_addr) : object_commom{file, memory_addr}
+	{
+		cout << "Creating object v2" << endl;
+	}
+
+	uint64_t get_message_header_size() const {
+		return spec_defs::message_header_v2_spec::size + (is_attribute_creation_order_tracked()?2:0);
+	}
+
+	uint64_t get_object_header_size() const {
+		return spec::size
+				+ (has_time_fields()?16:0)
+				+ (is_non_default_attribute_storage_phase_change_stored()?4:0)
+				+ get_size_of_size_of_chunk();
+	}
+
+	struct message_iterator_t {
+		using message_spec = typename spec_defs::message_header_v2_spec;
+
+		// TODO: check if message go out of block boundary.
+
+		file_handler_t * file;
+		uint64_t header_size;
+
+		struct block {
+			uint8_t * bgn; uint8_t * end;
+			block (uint8_t * bgn, uint64_t length) : bgn{bgn}, end{&bgn[length]} { }
+		};
+
+		list<block> message_block_queue;
+
+		uint8_t * _cur;
+		uint8_t * _end;
+
+		message_iterator_t(file_handler_t * file, uint64_t header_size, uint8_t * bgn, uint64_t length) :
+			file{file},
+			header_size{header_size}
+		{
+			_safe_append_block(bgn, length);
+			if (not message_block_queue.empty()) {
+				auto & block = message_block_queue.front();
+				_cur = block.bgn;
+				_end = block.end;
+			}
+		}
+
+		object_message_handler_t operator*() const {
+			object_message_handler_t ret = {
+				.type  = message_spec::type::get(_cur),
+				.size  = message_spec::size_of_message::get(_cur),
+				.flags = message_spec::flags::get(_cur),
+				.data  = _cur + header_size
+			};
+
+			if (ret.flags.test(1)) { // if the message is shared
+				ret.data = file->to_address(xparse_shared(ret.data));
+			}
+
+			return ret;
+
+		}
+
+		void _safe_append_block(uint8_t * bgn, uint64_t length)
+		{
+			if (length > 0) {
+				message_block_queue.emplace_back(bgn, length);
+			}
+		}
+
+
+		message_iterator_t & operator++() {
+
+			auto msg = **this;
+
+			if (msg.type == MSG_OBJECT_HEADER_CONTINUATION) {
+				if (spec_defs::message_object_header_continuation_spec::length::get(msg.data) > 0) {
+					message_block_queue.emplace_back(
+							file->to_address(spec_defs::message_object_header_continuation_spec::offset::get(msg.data)),
+							spec_defs::message_object_header_continuation_spec::length::get(msg.data)
+					);
+				}
+			}
+
+			_cur += header_size
+				 +  message_spec::size_of_message::get(_cur);
+
+			if ( _cur >= _end) {
+				message_block_queue.pop_front();
+				if (message_block_queue.empty()) // no more message to read.
+					return *this;
+				auto & block = message_block_queue.front();
+				_cur = block.bgn;
+				_end = block.end;
+			}
+
+			return *this;
+		}
+
+		bool end() const {
+			return message_block_queue.empty();
+		}
+
+	};
+
+	message_iterator_t get_message_iterator() const
+	{
+		uint64_t offset = get_object_header_size();
+		// length - 4 because of checksum.
+		uint64_t length = get_reader_for(get_size_of_size_of_chunk())(&memory_addr[offset-get_size_of_size_of_chunk()]) - 4;
+
+		return message_iterator_t{file, spec_defs::message_header_v2_spec::size + (is_attribute_creation_order_tracked()?2:0), &memory_addr[offset], length};
+
+	}
+
+	void parse_messages()
+	{
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			dispatch_message(msg.type, msg.data);
+		}
+	}
+
+	uint8_t get_size_of_size_of_chunk() const {
+		return 1<<(0b0000'0011u&spec::flags::get(memory_addr));
+	}
+
+	bool is_attribute_creation_order_tracked() const {
+		return 0b0000'0100u & spec::flags::get(memory_addr);
+	}
+
+	bool is_attribute_creation_order_indexed() const {
+		return 0b0000'1000u & spec::flags::get(memory_addr);
+	}
+
+	bool is_non_default_attribute_storage_phase_change_stored() const {
+		return 0b0001'0000u & spec::flags::get(memory_addr);
+	}
+
+	bool has_time_fields() const {
+		return 0b0010'0000u & spec::flags::get(memory_addr);
+	}
+
+	uint32_t access_time() {
+		assert(has_time_fields());
+		return read_at<uint32_t>(memory_addr + spec::size + 0);
+	}
+
+	uint32_t modification_time() {
+		assert(has_time_fields());
+		return read_at<uint32_t>(memory_addr + spec::size + 4);
+	}
+
+	uint32_t change_time() {
+		assert(has_time_fields());
+		return read_at<uint32_t>(memory_addr + spec::size + 8);
+	}
+
+	uint32_t birth_time() {
+		assert(has_time_fields());
+		return read_at<uint32_t>(memory_addr + spec::size + 12);
+	}
+
+	uint16_t maximum_compact_attribute_count() {
+		assert(is_non_default_attribute_storage_phase_change_stored());
+		return read_at<uint16_t>(memory_addr + spec::size + (has_time_fields()?16:0) + 0);
+	}
+
+	uint16_t minimum_compact_attribute_count() {
+		assert(is_non_default_attribute_storage_phase_change_stored());
+		return read_at<uint16_t>(memory_addr + spec::size + (has_time_fields()?16:0) + 2);
+	}
+
+	uint8_t * first_message() {
+		return memory_addr
+				+ spec::size
+				+ (has_time_fields()?16:0)
+				+ (is_non_default_attribute_storage_phase_change_stored()?4:0)
+				+ get_size_of_size_of_chunk();
+	}
+
+	uint64_t size_of_chunk() {
+		uint8_t * addr = memory_addr
+				+ spec::size
+				+ (has_time_fields()?16:0)
+				+ (is_non_default_attribute_storage_phase_change_stored()?4:0);
+		return get_reader_for(get_size_of_size_of_chunk())(addr);
+	}
+
+};
+
 
 struct object_v2 : public object_commom {
 	using spec = typename spec_defs::object_header_v2_spec;
@@ -3023,6 +3354,230 @@ struct object_v2 : public object_commom {
 
 };
 
+
+template<typename TRAIT>
+struct object_template : public TRAIT {
+
+	using TRAIT::object::file;
+	using TRAIT::object::memory_addr;
+
+	using TRAIT::parse_messages;
+	using TRAIT::get_message_iterator;
+
+	object_template(file_handler_t * file, uint8_t * addr) : TRAIT{file, addr}
+	{
+		parse_messages();
+	}
+
+	virtual ~object_template() { }
+
+
+	virtual auto get_id() const -> uint64_t override {
+		return file->to_offset(memory_addr);
+	}
+
+	virtual auto operator[](string const & name) const -> h5obj override
+	{
+
+		uint64_t offset = undef_offset;
+
+		for (auto i = get_message_iterator(); not i.end() and offset == undef_offset; ++i) {
+			auto msg = *i;
+
+			switch (msg.type) {
+			case MSG_LINK: {
+					auto link = TRAIT::object_commom::parse_link(msg.data);
+					offset = link.second;
+					break;
+				}
+			case MSG_SYMBOL_TABLE: {
+					offset = object_symbol_table_t{file, msg.data}[name];
+					break;
+				}
+			}
+
+		}
+
+		return h5obj{file->make_object(offset)};
+	}
+
+//	virtual vector<size_t> shape() const override {
+//		if (dataspace._shape) {
+//			return vector<size_t>{&dataspace._shape[0], &dataspace._shape[*dataspace.rank]};
+//		}
+//		throw EXCEPTION("shape is not defined");
+//	}
+//
+//	virtual size_t shape(int i) const override {
+//		if (not dataspace._shape)
+//			throw EXCEPTION("Shape is not defined");
+//		if (i >= * dataspace.rank)
+//			throw EXCEPTION("request shape is out of bounds (%d)", static_cast<int>(*dataspace.rank));
+//		return dataspace._shape[i];
+//	}
+
+//	virtual uint64_t element_size() const override {
+//		return *datatype.size_of_elements;
+//	}
+
+//	virtual uint8_t * continuous_data() const override {
+//		return file->to_address(datalayout.data_address);
+//	}
+
+//	virtual uint8_t * fill_value() const override {
+//		return fillvalue.value;
+//	}
+
+//	virtual uint8_t data_layout() const override {
+//		return datalayout.layout_class;
+//	}
+
+//	virtual vector<size_t> shape_of_chunk() const override {
+//		if (datalayout._shape_of_chunk) {
+//			return vector<size_t>{&datalayout._shape_of_chunk[0], &datalayout._shape_of_chunk[*dataspace.rank]};
+//		}
+//		throw EXCEPTION("shape_of_chunk is not defined");
+//	}
+
+//	template<typename T0, typename T1>
+//	static int chunk_offset_cmp(T0 const * a, T1 const * b, uint64_t rank) {
+//		for(uint64_t i = 0; i < rank; ++i) {
+//			if(a[i] == b[i]) continue;
+//			else if (a[i] > b[i]) { return 1; }
+//			else if (a[i] < b[i]) { return -1; }
+//		}
+//		return 0;
+//	}
+
+//	bool key_is_in_chunk(uint64_t const * key, length_type const * offset) const {
+//		for(int i = 0; i < *dataspace.rank; ++i) {
+//			if(key[i] >= (offset[i]+datalayout._shape_of_chunk[i])) {
+//				return false;
+//			}
+//		}
+//		return true;
+//	}
+
+//	size_t _find_sub_chunk(chunk_btree_v1 const & cur, uint64_t const * key) const {
+//		size_t i = cur.get_entries_count()-1;
+//		while (i >= 0) {
+//			length_type * offset = cur.get_offset(i);
+//			if (chunk_offset_cmp(key, offset, *dataspace.rank) >= 0) {
+//				break;
+//			}
+//			--i;
+//		}
+//		return i;
+//	}
+
+//	virtual uint8_t * dataset_find_chunk(uint64_t const * key) const override {
+//
+//		chunk_btree_v1 cur{file, file->to_address(datalayout.chunk_btree_v1_root), *datalayout.dimensionality};
+//
+//		// Are we bellow the first chunk ?
+//		if (chunk_offset_cmp(key, cur.get_offset(0), *dataspace.rank) < 0) {
+//			return nullptr;
+//		}
+//
+//		while(cur.get_depth() != 0) {
+//			size_t i = _find_sub_chunk(cur, key);
+//			cur = chunk_btree_v1{file, file->to_address(cur.get_node(i)), *datalayout.dimensionality};
+//		}
+//
+//		size_t i = _find_sub_chunk(cur, key);
+//		if (chunk_offset_cmp(key, cur.get_offset(i), *dataspace.rank) == 0) { // check if we are within the chunk
+//			return file->to_address(cur.get_node(i));
+//		} else {
+//			return nullptr;
+//		}
+//
+//	}
+
+	virtual auto keys() const -> vector<string> override {
+
+		vector<string> ret;
+
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+
+			switch (msg.type) {
+			case MSG_LINK: {
+					auto link = TRAIT::object_commom::parse_link(msg.data);
+					ret.push_back(link.first);
+					break;
+				}
+			case MSG_SYMBOL_TABLE: {
+					object_symbol_table_t{file, msg.data}.ls(ret);
+					break;
+				}
+			}
+
+		}
+
+		return ret;
+
+	}
+
+	virtual auto list_attributes() const -> vector<string> override {
+		vector<string> ret;
+
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			if (msg.type == MSG_ATTRIBUTE) {
+				uint8_t * message_body = msg.data;
+				auto version = spec_defs::message_attribute_v1_spec::version::get(message_body);
+
+				switch (version) {
+				case 1: {
+					ret.push_back(reinterpret_cast<char const *>(message_body+spec_defs::message_attribute_v1_spec::size));
+					break;
+				}
+				case 2: {
+					ret.push_back(reinterpret_cast<char const *>(message_body+spec_defs::message_attribute_v2_spec::size));
+					break;
+				}
+				case 3: {
+					ret.push_back(reinterpret_cast<char const *>(message_body+spec_defs::message_attribute_v3_spec::size));
+					break;
+				}
+				default: {
+					throw EXCEPTION("Not implemented");
+				}
+				}
+			} else if (msg.type == MSG_ATTRIBUTE_INFO) {
+				cout << "WARNING: attribute info is not tested yet." << endl;
+				auto attribute_info = object_attribute_info_t(file, msg.data);
+				auto btree = btree_v2_header<typename spec_defs::btree_v2_record_type8>(file, file->to_address(attribute_info.attribute_name_btree_address));
+				auto xx = btree.list_records();
+				for(auto i: xx) {
+					cout << (void*)i << endl;
+				}
+			}
+		}
+
+		return ret;
+	}
+
+	virtual void print_info() const override
+	{
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+
+			switch(msg.type) {
+			case MSG_DATASPACE:
+				cout << object_dataspace_t{msg.data};
+				break;
+			case MSG_DATA_LAYOUT:
+				cout << object_datalayout_t{file, msg.data};
+				break;
+			}
+
+		}
+
+	}
+
+};
+
 }; // struct _impl
 
 template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH>
@@ -3057,7 +3612,7 @@ auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::file_handler_t::make_object(uint64_t
 	int version = memaddr[offset+OFFSET_V1_OBJECT_HEADER_VERSION];
 	if (version == 1) {
 		cout << "creating object at " << std::hex << offset << endl;
-		return (object_cache[offset] = make_shared<object_v1>(this, &memaddr[offset]));
+		return (object_cache[offset] = make_shared<object_template<object_v1_trait>>(this, &memaddr[offset]));
 	} else if (version == 'O') {
 		uint32_t sign = *reinterpret_cast<uint32_t*>(&memaddr[offset]);
 		if (sign != 0x5244484ful)
@@ -3066,7 +3621,7 @@ auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::file_handler_t::make_object(uint64_t
 		if (version != 2)
 			throw EXCEPTION("Not implemented object version %d", version);
 		cout << "creating object at " << std::hex << offset << endl;
-		return (object_cache[offset] = make_shared<object_v2>(this, &memaddr[offset]));
+		return (object_cache[offset] = make_shared<object_template<object_v2_trait>>(this, &memaddr[offset]));
 	}
 
 	throw runtime_error("TODO " STR(__LINE__));
