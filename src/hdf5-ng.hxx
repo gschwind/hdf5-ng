@@ -214,6 +214,7 @@ struct slc {
 
 };
 
+
 using data_reader_func = uint64_t (*)(uint8_t*);
 static inline data_reader_func get_reader_for(uint8_t size) {
 	switch(size) {
@@ -347,6 +348,11 @@ struct object_interface : public _h5obj {
 	}
 
 	virtual uint8_t * dataset_find_chunk(uint64_t const * key) const {
+		throw EXCEPTION("Not implemented");
+	}
+
+	virtual vector<chunk_desc_t> list_chunk() const
+	{
 		throw EXCEPTION("Not implemented");
 	}
 
@@ -1154,38 +1160,35 @@ struct btree_v2_header : public object {
 
 };
 
-struct btree_v1 : public object {
+
+struct btree_v1 {
 	using spec = typename spec_defs::b_tree_v1_hdr_spec;
 
-	using object::file;
-	using object::memory_addr;
+	uint8_t * memory_addr;
 
-	uint64_t key_length;
-
-	btree_v1(file_handler_t * file, uint8_t * addr, uint64_t key_length) : object{file, addr}, key_length{key_length} { }
+	btree_v1(uint8_t * memory_addr) : memory_addr{memory_addr} { }
 
 	btree_v1(btree_v1 const &) = default;
-
 	btree_v1 & operator=(btree_v1 const & x) = default;
 
 	/* Note : there is K+1 keys */
-	uint8_t * get_key(int i) const
+	uint8_t * get_key(uint64_t key_length, int i) const
 	{
 		return &memory_addr[spec::size+i*(SIZE_OF_OFFSET+key_length)];
 	}
 
 	/* Note: there is K nodes */
-	offset_type get_node(int i) const
+	offset_type get_node(uint64_t key_length, int i) const
 	{
-		return *reinterpret_cast<offset_type*>(&memory_addr[spec::size+i*(SIZE_OF_OFFSET+key_length)+key_length]);
+		return read_at<offset_type>(&memory_addr[spec::size+i*(SIZE_OF_OFFSET+key_length)+key_length]);
 	}
 
-	uint64_t get_depth() const
+	uint8_t get_depth() const
 	{
 		return spec::node_level::get(memory_addr);
 	}
 
-	uint64_t get_entries_count() const
+	uint16_t get_entries_count() const
 	{
 		return spec::entries_used::get(memory_addr);
 	}
@@ -1195,29 +1198,17 @@ struct btree_v1 : public object {
 
 struct group_btree_v1 : public btree_v1 {
 
-	group_btree_v1(file_handler_t * file, uint8_t * addr) : btree_v1{file, addr, SIZE_OF_LENGTH} { }
+	group_btree_v1(uint8_t * addr) : btree_v1{addr} { }
 	group_btree_v1(group_btree_v1 const &) = default;
 	group_btree_v1 & operator=(group_btree_v1 const &) = default;
 
-	length_type get_key(int i) const
+	length_type get_key(uint64_t key_length, int i) const
 	{
-		return *reinterpret_cast<length_type*>(btree_v1::get_key(i));
+		return *reinterpret_cast<length_type*>(btree_v1::get_key(key_length, i));
 	}
 
 };
 
-struct chunk_btree_v1 : public btree_v1 {
-
-	chunk_btree_v1(file_handler_t * file, uint8_t * addr, uint64_t dimensionality) : btree_v1{file, addr, 8+8*(dimensionality)} { }
-	chunk_btree_v1(chunk_btree_v1 const &) = default;
-	chunk_btree_v1 & operator=(chunk_btree_v1 const &) = default;
-
-	length_type * get_offset(int i) const
-	{
-		return reinterpret_cast<length_type*>(btree_v1::get_key(i)+spec_defs::b_tree_v1_chunk_key_spec::size);
-	}
-
-};
 
 struct group_symbol_table_entry {
 	using spec = typename spec_defs::group_symbol_table_entry_spec;
@@ -1420,22 +1411,22 @@ struct object_message_handler_t {
 struct object_symbol_table_t {
 	file_handler_t * file;
 
-	offset_type lheap;
+	offset_type local_heap;
 	offset_type group_btree_v1_root;
 
 	// Create the symbole table from message.
 	object_symbol_table_t(file_handler_t * file, uint8_t * msg) : file{file}
 	{
-		cout << "parse_symbol_table " << std::dec
-				<< spec_defs::message_symbole_table_spec::local_heap_address::get(msg) << " "
-				<< spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg)
-				<< endl;
-		lheap = spec_defs::message_symbole_table_spec::local_heap_address::get(msg);
+//		cout << "parse_symbol_table " << std::dec
+//				<< spec_defs::message_symbole_table_spec::local_heap_address::get(msg) << " "
+//				<< spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg)
+//				<< endl;
+		local_heap = spec_defs::message_symbole_table_spec::local_heap_address::get(msg);
 		group_btree_v1_root = spec_defs::message_symbole_table_spec::b_tree_v1_address::get(msg);
 	}
 
 	char const * _get_link_name(uint64_t offset) const {
-		local_heap_v0 h{file, file->to_address(lheap)};
+		local_heap_v0 h{file, file->to_address(local_heap)};
 		return reinterpret_cast<char *>(h.get_data(offset));
 	}
 
@@ -1465,7 +1456,7 @@ struct object_symbol_table_t {
 	size_t _group_find_symbol_table_index(group_btree_v1 const & cur, char const * key) const
 	{
 		for(size_t i = 0; i < cur.get_entries_count(); ++i) {
-			char const * link_name = _get_link_name(cur.get_key(i+1));
+			char const * link_name = _get_link_name(cur.get_key(SIZE_OF_LENGTH, i+1));
 			if (std::strcmp(key, link_name) <= 0)
 				return i;
 		}
@@ -1474,17 +1465,17 @@ struct object_symbol_table_t {
 
 	/** return group_symbole_table that should content the key **/
 	offset_type _group_find_symbol_table(char const * key) const {
-		group_btree_v1 cur{file, file->to_address(group_btree_v1_root)};
-		if (std::strcmp(key, _get_link_name(cur.get_key(cur.get_entries_count()))) > 0)
+		group_btree_v1 cur{file->to_address(group_btree_v1_root)};
+		if (std::strcmp(key, _get_link_name(cur.get_key(SIZE_OF_LENGTH, cur.get_entries_count()))) > 0)
 			throw EXCEPTION("Key `%s' not found", key);
 
 		while(cur.get_depth() != 0) {
 			size_t i = _group_find_symbol_table_index(cur, key);
-			cur = group_btree_v1{file, file->to_address(cur.get_node(i))};
+			cur = group_btree_v1{file->to_address(cur.get_node(SIZE_OF_LENGTH, i))};
 		}
 
 		size_t i = _group_find_symbol_table_index(cur, key);
-		return cur.get_node(i);
+		return cur.get_node(SIZE_OF_LENGTH, i);
 
 	}
 
@@ -1494,7 +1485,7 @@ struct object_symbol_table_t {
 
 		vector<offset_type> group_symbole_tables;
 		cout << "btree-root = " << std::hex << group_btree_v1_root << std::dec << endl;
-		stack.push(group_btree_v1{file, file->to_address(group_btree_v1_root)});
+		stack.push(group_btree_v1{file->to_address(group_btree_v1_root)});
 		while(not stack.empty()) {
 			group_btree_v1 cur = stack.top();
 			cout << std::dec << "process node depth=" << cur.get_depth() << " entries_count=" << cur.get_entries_count() << endl;
@@ -1502,12 +1493,12 @@ struct object_symbol_table_t {
 			if (cur.get_depth() == 0) {
 				//assert(cur.get_entries_count() <= lK);
 				for(int i = 0; i < cur.get_entries_count(); ++i) {
-					group_symbole_tables.push_back(cur.get_node(i));
+					group_symbole_tables.push_back(cur.get_node(SIZE_OF_LENGTH, i));
 				}
 			} else {
 				//assert(cur.get_entries_count() <= nK);
 				for(int i = 0; i < cur.get_entries_count(); ++i) {
-					stack.push(group_btree_v1{file, file->to_address(cur.get_node(i))});
+					stack.push(group_btree_v1{file->to_address(cur.get_node(SIZE_OF_LENGTH, i))});
 				}
 			}
 		}
@@ -1906,6 +1897,96 @@ struct object_datalayout_t {
 	}
 
 
+	// A is the key entry in btree_v1
+	// B is the key that we looking for
+	inline int chunk_btree_v1_key_cmp(uint8_t const * a, uint8_t const * b)
+	{
+		// for the key we have to skip the 8 first bits that contain
+		return std::memcmp(a+spec_defs::b_tree_v1_chunk_key_spec::size, b, chunk_dimensionality*sizeof(uint64_t));
+	}
+
+	static int chunk_btree_v1_find_index(btree_v1 const & cur, uint64_t key_length, uint64_t const * key)
+	{
+		for (int i = cur.get_entries_count()-1; i >= 0; --i) {
+			if (chunk_btree_v1_key_cmp(cur.get_key(key_length, i), key) <= 0) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	chunk_desc_t chunk_btree_v1_find(uint64_t const * key) const
+	{
+		uint64_t key_length = spec_defs::b_tree_v1_chunk_key_spec::size+chunk_dimensionality*sizeof(uint64_t);
+
+		// Chunk aren't allocated
+		if (chunk_btree_v1.data_address == undef_offset)
+			return chunk_desc_t{0u,0u,undef_offset};
+
+		btree_v1 cur{file->to_address(chunk_btree_v1.data_address)};
+
+		// Are we bellow the first chunk ?
+		if (chunk_btree_v1_key_cmp(cur.get_key(key_length, 0), key) > 0) {
+			return chunk_desc_t{0u,0u,undef_offset};
+		}
+
+		while(cur.get_depth() != 0) {
+			size_t i = chunk_btree_v1_find_index(cur, key);
+			cur = btree_v1{file->to_address(cur.get_node(key_length, i))};
+		}
+
+		int i = chunk_btree_v1_find_index(cur, key);
+		if (i < 0) {
+			return chunk_desc_t{0u,0u,undef_offset};
+		}
+
+		return chunk_desc_t{
+			spec_defs::b_tree_v1_chunk_key_spec::chunk_size::get(cur.get_key(key_length, i)),
+			spec_defs::b_tree_v1_chunk_key_spec::filter_mask::get(cur.get_key(key_length, i)),
+			static_cast<uint64_t>(cur.get_node(key_length, i))
+		};
+
+	}
+
+	void chunk_btree_v1_ls(vector<chunk_desc_t> & ret) const
+	{
+		uint64_t const key_length = spec_defs::b_tree_v1_chunk_key_spec::size+chunk_dimensionality*sizeof(uint64_t);
+
+		stack<btree_v1> stack;
+
+		// Chunk aren't allocated
+		if (chunk_btree_v1.data_address == undef_offset)
+			return;
+
+		stack.push(btree_v1{file->to_address(chunk_btree_v1.data_address)});
+		while(not stack.empty()) {
+			btree_v1 cur = stack.top();
+			stack.pop();
+
+			if (cur.get_depth() == 0) {
+				//assert(cur.get_entries_count() <= lK);
+				for(int i = 0; i < cur.get_entries_count(); ++i) {
+					ret.emplace_back(
+							spec_defs::b_tree_v1_chunk_key_spec::chunk_size::get(cur.get_key(key_length, i)),
+							spec_defs::b_tree_v1_chunk_key_spec::filter_mask::get(cur.get_key(key_length, i)),
+							static_cast<uint64_t>(cur.get_node(key_length, i)));
+				}
+			} else {
+				//assert(cur.get_entries_count() <= nK);
+				for(int i = 0; i < cur.get_entries_count(); ++i) {
+					stack.push(btree_v1{file->to_address(cur.get_node(key_length, i))});
+				}
+			}
+		}
+	}
+
+	vector<chunk_desc_t> chunk_btree_v1_ls() const
+	{
+		vector<chunk_desc_t> ret;
+		chunk_btree_v1_ls(ret);
+		return ret;
+	}
+
 	friend ostream & operator<<(ostream & o, object_datalayout_t const & datalayout)
 	{
 		o << "datalayout.version = " << static_cast<int>(datalayout.version) << endl;
@@ -2091,7 +2172,7 @@ struct object_commom : public object, public object_interface
 
 
 	// Parse shared message to get the actual message offset
-	static uint64_t xparse_shared(uint8_t * msg)
+	static uint64_t parse_shared(uint8_t * msg)
 	{
 		uint8_t version = spec_defs::message_shared_vX_spec::version::get(msg);
 
@@ -2341,7 +2422,7 @@ struct object_v1_trait : public object_commom {
 	using object::file;
 	using object::memory_addr;
 
-	using object_commom::xparse_shared;
+	using object_commom::parse_shared;
 	using object_commom::dispatch_message;
 
 	object_v1_trait(file_handler_t * file, uint8_t * memory_addr) : object_commom{file, memory_addr}
@@ -2386,7 +2467,7 @@ struct object_v1_trait : public object_commom {
 			};
 
 			if (ret.flags.test(1)) { // if the message is shared
-				ret.data = file->to_address(xparse_shared(ret.data));
+				ret.data = file->to_address(parse_shared(ret.data));
 			}
 
 			return ret;
@@ -2473,7 +2554,7 @@ struct object_v2_trait : public object_commom {
 	using object::file;
 	using object::memory_addr;
 
-	using object_commom::xparse_shared;
+	using object_commom::parse_shared;
 	using object_commom::dispatch_message;
 
 	object_v2_trait(file_handler_t * file, uint8_t * memory_addr) : object_commom{file, memory_addr}
@@ -2531,7 +2612,7 @@ struct object_v2_trait : public object_commom {
 			};
 
 			if (ret.flags.test(1)) { // if the message is shared
-				ret.data = file->to_address(xparse_shared(ret.data));
+				ret.data = file->to_address(parse_shared(ret.data));
 			}
 
 			return ret;
@@ -2732,59 +2813,7 @@ struct object_template : public TRAIT {
 		return shape()[i];
 	}
 
-//	template<typename T0, typename T1>
-//	static int chunk_offset_cmp(T0 const * a, T1 const * b, uint64_t rank) {
-//		for(uint64_t i = 0; i < rank; ++i) {
-//			if(a[i] == b[i]) continue;
-//			else if (a[i] > b[i]) { return 1; }
-//			else if (a[i] < b[i]) { return -1; }
-//		}
-//		return 0;
-//	}
 
-//	bool key_is_in_chunk(uint64_t const * key, length_type const * offset) const {
-//		for(int i = 0; i < *dataspace.rank; ++i) {
-//			if(key[i] >= (offset[i]+datalayout._shape_of_chunk[i])) {
-//				return false;
-//			}
-//		}
-//		return true;
-//	}
-
-//	size_t _find_sub_chunk(chunk_btree_v1 const & cur, uint64_t const * key) const {
-//		size_t i = cur.get_entries_count()-1;
-//		while (i >= 0) {
-//			length_type * offset = cur.get_offset(i);
-//			if (chunk_offset_cmp(key, offset, *dataspace.rank) >= 0) {
-//				break;
-//			}
-//			--i;
-//		}
-//		return i;
-//	}
-
-//	virtual uint8_t * dataset_find_chunk(uint64_t const * key) const override {
-//
-//		chunk_btree_v1 cur{file, file->to_address(datalayout.chunk_btree_v1_root), *datalayout.dimensionality};
-//
-//		// Are we bellow the first chunk ?
-//		if (chunk_offset_cmp(key, cur.get_offset(0), *dataspace.rank) < 0) {
-//			return nullptr;
-//		}
-//
-//		while(cur.get_depth() != 0) {
-//			size_t i = _find_sub_chunk(cur, key);
-//			cur = chunk_btree_v1{file, file->to_address(cur.get_node(i)), *datalayout.dimensionality};
-//		}
-//
-//		size_t i = _find_sub_chunk(cur, key);
-//		if (chunk_offset_cmp(key, cur.get_offset(i), *dataspace.rank) == 0) { // check if we are within the chunk
-//			return file->to_address(cur.get_node(i));
-//		} else {
-//			return nullptr;
-//		}
-//
-//	}
 
 	virtual auto keys() const -> vector<string> override
 	{
@@ -2869,6 +2898,30 @@ struct object_template : public TRAIT {
 
 		}
 
+	}
+
+	virtual vector<chunk_desc_t> list_chunk() const override
+	{
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			if (msg.type == MSG_DATA_LAYOUT) {
+				auto datalayout = object_datalayout_t{file, msg.data};
+				switch (datalayout.layout_class) {
+				case object_datalayout_t::LAYOUT_CHUNKED:
+					switch(datalayout.chunk_indexing_type) {
+					case object_datalayout_t::CHUNK_INDEXING_BTREE_V1:
+						return datalayout.chunk_btree_v1_ls();
+					default:
+						throw EXCEPTION("Unsupported chunk layout");
+					}
+					break;
+				default:
+					throw EXCEPTION("Dataset is not chunked");
+				}
+			}
+		}
+
+		throw EXCEPTION("Dataset is not chunked");
 	}
 
 };

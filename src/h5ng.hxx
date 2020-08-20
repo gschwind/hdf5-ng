@@ -66,6 +66,15 @@ public:
 
 class h5obj;
 
+struct chunk_desc_t {
+	uint32_t size_of_chunk;
+	uint32_t filters;
+	uint64_t address;
+	chunk_desc_t (uint32_t size_of_chunk, uint32_t filters, uint64_t address) : size_of_chunk{size_of_chunk}, filters{filters}, address{address} { }
+	chunk_desc_t(chunk_desc_t const &) = default;
+	chunk_desc_t & operator=(chunk_desc_t const &) = default;
+};
+
 struct _h5obj {
 	_h5obj() = default;
 	virtual ~_h5obj() = default;
@@ -83,6 +92,10 @@ struct _h5obj {
 	virtual auto modification_time() const -> uint32_t = 0;
 	virtual auto comment() const -> char const * = 0;
 	virtual auto element_size() const -> uint64_t = 0;
+
+	virtual auto list_chunk() const -> vector<chunk_desc_t> {
+		throw EXCEPTION("Not implemented");
+	}
 
 	virtual void print_info() const = 0;
 
@@ -147,6 +160,10 @@ public:
 	auto element_size() const -> uint64_t
 	{
 		return _ptr->element_size();
+	}
+
+	auto list_chunk() const {
+		return _ptr->list_chunk();
 	}
 
 	template<typename ... ARGS>
