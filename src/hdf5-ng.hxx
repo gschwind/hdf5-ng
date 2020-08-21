@@ -2197,8 +2197,8 @@ struct object_data_storage_filter_pipeline_t {
 					cur.cur += 4;
 				}
 
-				filter f(filter_identifier, name, flags, client_data);
-				cout << f << endl;
+				filters.emplace_back(filter_identifier, name, flags, client_data);
+//				cout << filters.back() << endl;
 
 			}
 
@@ -2216,8 +2216,8 @@ struct object_data_storage_filter_pipeline_t {
 				auto name = cur.read_string(name_length);
 				auto client_data = cur.read_array<uint32_t>(number_client_data_value);
 
-				filter f(filter_identifier, name, flags, client_data);
-				cout << f << endl;
+				filters.emplace_back(filter_identifier, name, flags, client_data);
+//				cout << filters.back() << endl;
 
 			}
 			break;
