@@ -43,22 +43,22 @@ int main(int argc, char const ** argv) {
 	}
 
 
-	try {
-		auto chunks = hf["set"].list_chunk();
-
-		uint64_t size = 0;
-		for (auto const &chunk: chunks) {
-			cout << "chunk = " << chunk.address << " , size = " << chunk.size_of_chunk << endl;
-			size += chunk.size_of_chunk;
-		}
-
-		cout << "Total size = " << size << endl;
-		cout << "Total number of chunk = " << chunks.size() << endl;
-
-	} catch(h5ng::exception & e) {
-		cout << "FAIL TO LIST CHUNK" << endl;
-		cout << e.what() << endl;
-	}
+//	try {
+//		auto chunks = hf["set"].list_chunk();
+//
+//		uint64_t size = 0;
+//		for (auto const &chunk: chunks) {
+//			cout << "chunk = " << chunk.address << " , size = " << chunk.size_of_chunk << endl;
+//			size += chunk.size_of_chunk;
+//		}
+//
+//		cout << "Total size = " << size << endl;
+//		cout << "Total number of chunk = " << chunks.size() << endl;
+//
+//	} catch(h5ng::exception & e) {
+//		cout << "FAIL TO LIST CHUNK" << endl;
+//		cout << e.what() << endl;
+//	}
 
 //	cout << "READ DATA 0" << endl;
 //

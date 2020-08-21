@@ -493,6 +493,24 @@ struct message_comment_spec : public type_spec {
 	// variable size.
 };
 
+
+// Layout: Object Comment Message  #0x000D
+struct message_data_storage_filter_pipeline_v1 : public type_spec {
+	using version             = spec<uint8_t,  none>;
+	using munber_of_filters   = spec<uint8_t,  version>;
+	using reserved0           = spec<uint16_t, munber_of_filters>;
+	using reserved1           = spec<uint32_t, reserved0>;
+	// Variable size data
+	enum : uint64_t { size = last<reserved1>::size };
+};
+
+struct message_data_storage_filter_pipeline_v2 : public type_spec {
+	using version             = spec<uint8_t,  none>;
+	using munber_of_filters   = spec<uint8_t,  version>;
+	// Variable size data
+	enum : uint64_t { size = last<munber_of_filters>::size };
+};
+
 // Layout: Object Header Continuation Message #0x0010
 struct message_object_header_continuation_spec : public type_spec {
 	using offset        = spec<offset_type,  none>;

@@ -143,14 +143,7 @@ struct addr_reader {
 		return ret;
 	}
 
-	template<typename T>
-	inline void read(T & v)
-	{
-		v = *reinterpret_cast<T*>(cur);
-		cur += sizeof(T);
-	}
-
-	inline uint64_t reads(size_t s)
+	inline uint64_t read_int(size_t s)
 	{
 		uint64_t ret;
 		switch(s) {
@@ -169,6 +162,22 @@ struct addr_reader {
 		default:
 			throw EXCEPTION("Unexpected read size");
 		}
+		return ret;
+	}
+
+	// Read string, will be zero padded if neadded
+	inline string read_string(size_t size)
+	{
+		string ret = string{reinterpret_cast<char *>(cur), size};
+		cur += size;
+		return ret;
+	}
+
+	template<typename T>
+	vector<T> read_array(size_t size)
+	{
+		auto ret = vector<T>{reinterpret_cast<T *>(cur), reinterpret_cast<T *>(cur) + size};
+		cur += size*sizeof(T);
 		return ret;
 	}
 
@@ -1847,7 +1856,7 @@ struct object_datalayout_t {
 				chunk_shape.resize(chunk_dimensionality);
 
 				for (unsigned i = 0; i < chunk_dimensionality; ++i)
-					chunk_shape[i] = cur.reads(dimensionality_encoded_size);
+					chunk_shape[i] = cur.read_int(dimensionality_encoded_size);
 
 				chunk_indexing_type = cur.read<uint8_t>();
 
@@ -2140,7 +2149,88 @@ struct object_link_info_t {
 
 };
 
-struct object_commom : public object, public object_interface
+struct object_data_storage_filter_pipeline_t {
+
+	struct filter {
+		uint16_t id;
+		string name;
+		bitset<16> flags;
+		vector<uint32_t> params;
+
+		filter(uint16_t id, string name, bitset<16> flags, vector<uint32_t> const & params) :
+			id{id},
+			name{name},
+			flags{flags},
+			params{params}
+		{
+
+		}
+
+		friend ostream & operator<< (ostream & o, filter const & f)
+		{
+			return o << "<filter id=" << f.id <<", name=" << f.name << ", flags=" << f.flags << ", client data=" << f.params << ">";
+		}
+
+	};
+
+	vector<filter> filters;
+
+	object_data_storage_filter_pipeline_t(uint8_t * msg)
+	{
+
+		auto version = spec_defs::message_data_storage_filter_pipeline_v1::version::get(msg);
+		switch (version) {
+		case 1: {
+			auto nfilter = spec_defs::message_data_storage_filter_pipeline_v1::munber_of_filters::get(msg);
+			auto cur = addr_reader{msg+spec_defs::message_data_storage_filter_pipeline_v1::size};
+
+			for (int i = 0; i < nfilter; ++i) {
+				auto filter_identifier = cur.read<uint16_t>();
+				auto name_length = cur.read<uint16_t>(); // Heigth byte padded.
+				auto flags = cur.read<uint16_t>();
+				auto number_client_data_value = cur.read<uint16_t>();
+				auto name = cur.read_string(name_length);
+				auto client_data = cur.read_array<uint32_t>(number_client_data_value);
+
+				// skip padding if necessary
+				if (number_client_data_value%2) {
+					cur.cur += 4;
+				}
+
+				filter f(filter_identifier, name, flags, client_data);
+				cout << f << endl;
+
+			}
+
+			break;
+		}
+		case 2: {
+			auto nfilter = spec_defs::message_data_storage_filter_pipeline_v2::munber_of_filters::get(msg);
+			auto cur = addr_reader{msg+spec_defs::message_data_storage_filter_pipeline_v2::size};
+
+			for (int i = 0; i < nfilter; ++i) {
+				auto filter_identifier = cur.read<uint16_t>();
+				auto name_length = cur.read<uint16_t>();
+				auto flags = cur.read<uint16_t>();
+				auto number_client_data_value = cur.read<uint16_t>();
+				auto name = cur.read_string(name_length);
+				auto client_data = cur.read_array<uint32_t>(number_client_data_value);
+
+				filter f(filter_identifier, name, flags, client_data);
+				cout << f << endl;
+
+			}
+			break;
+		}
+		default:
+			throw EXCEPTION("Unsupported data_storage_filter_pipeline message (%d)", version);
+		}
+
+
+	}
+};
+
+struct object_base : public object, public object_interface
 {
 	using object::file;
 	using object::memory_addr;
@@ -2232,31 +2322,25 @@ struct object_commom : public object, public object_interface
 
 		uint8_t type = 0u;
 		if (flags.test(3)) {
-			cur.read(type);
+			type = cur.read<uint8_t>();
 		}
 
 		uint64_t creation_order = 0xffff'ffff'ffff'ffffu;
 		if (flags.test(2)) {
-			cur.read(creation_order);
+			creation_order = cur.read<uint64_t>();
 		}
 
 		// default to zero.
 		uint8_t charset = 0x00u;
 		if (flags.test(4)) {
 //			cout << "has charset" << endl;
-			cur.read(charset);
+			charset = cur.read<uint8_t>();
 		}
 
 		uint64_t size_of_length_of_name = 1u<<(flags.to_ulong()&0x0000'0011u);
-		uint64_t length_of_name = cur.reads(size_of_length_of_name);
+		uint64_t length_of_name = cur.read_int(size_of_length_of_name);
 
-		string link_name;
-		{
-			vector<uint8_t> link_name_s{&cur.cur[0], &cur.cur[length_of_name]};
-			link_name_s.push_back(0u);
-			link_name = string{link_name_s.begin(), link_name_s.end()};
-			cur.cur += length_of_name;
-		}
+		string link_name = cur.read_string(length_of_name);
 
 		// TODO: Link information.
 //		cout << "parse_link" << endl;
@@ -2272,16 +2356,13 @@ struct object_commom : public object, public object_interface
 
 		switch (type) {
 		case 0: { // Hard link
-			cur.read(object_addr);
+			object_addr = cur.read<uint64_t>();
 //			cout << "hardlink address = " << object_addr << endl;
 			break;
 		}
 		case 1: { // soft link
 			auto size = cur.read<uint16_t>();
-			vector<uint8_t> soft_link_value_s{&cur.cur[0], &cur.cur[size]};
-			soft_link_value_s.push_back(0u);
-			string soft_link_value = string{soft_link_value_s.begin(), soft_link_value_s.end()};
-			cur.cur += size;
+			string soft_link_value = cur.read_string(size);
 			cout << "soft link = " << soft_link_value << endl;
 			EXCEPTION("Soft link aren't implemented yet");
 			break;
@@ -2338,7 +2419,7 @@ struct object_commom : public object, public object_interface
 
 	}
 
-	object_commom(file_handler_t * file, uint8_t * addr) : object{file, addr}
+	object_base(file_handler_t * file, uint8_t * addr) : object{file, addr}
 	{
 		_modification_time = 0;
 		_comment = nullptr;
@@ -2373,8 +2454,10 @@ struct object_commom : public object, public object_interface
 		case MSG_GROUP_INFO:
 			parse_group_info(data);
 			break;
-		case MSG_DATA_STORAGE_FILTER_PIPELINE:
+		case MSG_DATA_STORAGE_FILTER_PIPELINE: {
+			auto filters = object_data_storage_filter_pipeline_t{data};
 			break;
+		}
 		case MSG_ATTRIBUTE:
 			// ignore attribute message
 			break;
@@ -2416,16 +2499,16 @@ struct object_commom : public object, public object_interface
 };
 
 
-struct object_v1_trait : public object_commom {
+struct object_v1_trait : public object_base {
 	using spec = typename spec_defs::object_header_v1_spec;
 
 	using object::file;
 	using object::memory_addr;
 
-	using object_commom::parse_shared;
-	using object_commom::dispatch_message;
+	using object_base::parse_shared;
+	using object_base::dispatch_message;
 
-	object_v1_trait(file_handler_t * file, uint8_t * memory_addr) : object_commom{file, memory_addr}
+	object_v1_trait(file_handler_t * file, uint8_t * memory_addr) : object_base{file, memory_addr}
 	{
 		cout << "Creating object v1" << endl;
 	}
@@ -2548,16 +2631,16 @@ struct object_v1_trait : public object_commom {
 };
 
 
-struct object_v2_trait : public object_commom {
+struct object_v2_trait : public object_base {
 	using spec = typename spec_defs::object_header_v2_spec;
 
 	using object::file;
 	using object::memory_addr;
 
-	using object_commom::parse_shared;
-	using object_commom::dispatch_message;
+	using object_base::parse_shared;
+	using object_base::dispatch_message;
 
-	object_v2_trait(file_handler_t * file, uint8_t * memory_addr) : object_commom{file, memory_addr}
+	object_v2_trait(file_handler_t * file, uint8_t * memory_addr) : object_base{file, memory_addr}
 	{
 		cout << "Creating object v2" << endl;
 	}
@@ -2778,7 +2861,7 @@ struct object_template : public TRAIT {
 
 			switch (msg.type) {
 			case MSG_LINK: {
-					auto link = TRAIT::object_commom::parse_link(msg.data);
+					auto link = TRAIT::object_base::parse_link(msg.data);
 					offset = link.second;
 					break;
 				}
@@ -2825,7 +2908,7 @@ struct object_template : public TRAIT {
 
 			switch (msg.type) {
 			case MSG_LINK: {
-					auto link = TRAIT::object_commom::parse_link(msg.data);
+					auto link = TRAIT::object_base::parse_link(msg.data);
 					ret.push_back(link.first);
 					break;
 				}
