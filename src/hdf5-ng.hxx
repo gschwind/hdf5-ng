@@ -64,8 +64,8 @@ enum message_typeid_e : uint16_t {
 	MSG_DATASPACE                          = 0x0001u,
 	MSG_LINK_INFO                          = 0x0002u,
 	MSG_DATATYPE                           = 0x0003u,
-	MSG_FILL_VALUE_OLD                     = 0x0004u,
-	MSG_FILL_VALUE                         = 0x0005u,
+	MSG_FILL_VALUE                         = 0x0004u,
+	MSG_DATA_STORAGE_FILL_VALUE            = 0x0005u,
 	MSG_LINK                               = 0x0006u,
 	MSG_DATA_STORAGE                       = 0x0007u,
 	MSG_DATA_LAYOUT                        = 0x0008u,
@@ -113,6 +113,8 @@ uint64_t align_forward(uint64_t ptr)
 	return ((ptr-1)&~mask)+alignement;
 }
 
+
+
 template<typename T>
 ostream& operator<<(ostream &o, vector<T> const &v)
 {
@@ -126,6 +128,17 @@ ostream& operator<<(ostream &o, vector<T> const &v)
 	o << "]";
 	return o;
 
+}
+
+template<typename T>
+string vector_to_hex_string(vector<T> const &v)
+{
+	ostringstream o;
+	o << "0x";
+	for (auto x: v) {
+		o << std::hex << std::setw(sizeof(T)*2) << std::setfill('0') << static_cast<uint64_t>(x);
+	}
+	return o.str();
 }
 
 struct addr_reader {
@@ -2226,9 +2239,114 @@ struct object_data_storage_filter_pipeline_t {
 			throw EXCEPTION("Unsupported data_storage_filter_pipeline message (%d)", version);
 		}
 
+	}
 
+
+	friend ostream & operator<< (ostream & o, object_data_storage_filter_pipeline_t const & f)
+	{
+		for (int i = 0; i < f.filters.size(); ++i) {
+			o << "data_storage_filter_pipeline.filter["<<i<<"] = " << f.filters[i] << endl;
+		}
+		return o;
+	}
+
+};
+
+struct object_fill_value_t {
+	vector<uint8_t> value;
+
+	object_fill_value_t(uint8_t * msg)
+	{
+		auto cur = addr_reader{msg+spec_defs::message_fillvalue_old_spec::size};
+		value = cur.read_array<uint8_t>(spec_defs::message_fillvalue_old_spec::size_of_fillvalue::get(msg));
+	}
+
+	friend ostream & operator<< (ostream & o, object_fill_value_t const & f)
+	{
+		return o << "fillvalue_old.value = " << vector_to_hex_string(f.value) << endl;
 	}
 };
+
+struct object_data_storage_fill_value_t {
+	bitset<8> flags;
+	vector<uint8_t> value;
+
+	object_data_storage_fill_value_t(uint8_t * msg)
+	{
+		auto cur = addr_reader{msg};
+		auto version = cur.read<uint8_t>();
+
+		switch (version) {
+		case 1: {
+			auto space_allocation_time = cur.read<uint8_t>();
+			flags |= (space_allocation_time&0b0000'0011u);
+
+			auto fill_value_write_time = cur.read<uint8_t>();
+			flags |= (fill_value_write_time&0b0000'0011u)<<2u;
+
+			auto fill_value_defined = cur.read<uint8_t>();
+			flags |= (fill_value_write_time&0b0000'0001u)<<5u;
+
+			if (not flags.test(5))
+				flags.set(4);
+
+			auto fillvalue_size = cur.read<uint32_t>();
+			value = cur.read_array<uint8_t>(fillvalue_size);
+			break;
+		}
+		case 2: {
+			auto space_allocation_time = cur.read<uint8_t>();
+			flags |= (space_allocation_time&0b0000'0011u);
+
+			auto fill_value_write_time = cur.read<uint8_t>();
+			flags |= (fill_value_write_time&0b0000'0011u)<<2u;
+
+			auto fill_value_defined = cur.read<uint8_t>();
+			flags |= (fill_value_write_time&0b0000'0001u)<<5u;
+
+			if (not flags.test(5))
+				flags.set(4);
+
+			if (flags.test(5)) {
+				auto fillvalue_size = cur.read<uint32_t>();
+				value = cur.read_array<uint8_t>(fillvalue_size);
+			}
+
+			break;
+		}
+		case 3: {
+			flags = cur.read<uint8_t>();
+
+			if (flags.test(5)) {
+				auto fillvalue_size = cur.read<uint32_t>();
+				value = cur.read_array<uint8_t>(fillvalue_size);
+			}
+			break;
+		}
+		default:
+			throw EXCEPTION("Unsuported data_storage_fillvalue version (%d)", version);
+		}
+
+
+	}
+
+	bool has_fillvalue() const
+	{
+		return flags.test(5);
+	}
+
+	friend ostream & operator<< (ostream & o, object_data_storage_fill_value_t const & f)
+	{
+		o << "data_storage_fillvalue.flags = 0b" << f.flags << endl;
+		if (f.has_fillvalue()) {
+			return o << "data_storage_fillvalue.value = " << vector_to_hex_string(f.value) << endl;
+		} else {
+			return o << "data_storage_fillvalue.value = undef" << endl;
+		}
+	}
+
+};
+
 
 struct object_base : public object, public object_interface
 {
@@ -2436,10 +2554,10 @@ struct object_base : public object, public object_interface
 			break;
 		case MSG_DATATYPE:
 			break;
-		case MSG_FILL_VALUE_OLD:
+		case MSG_FILL_VALUE:
 			parse_fillvalue_old(data);
 			break;
-		case MSG_FILL_VALUE:
+		case MSG_DATA_STORAGE_FILL_VALUE:
 			parse_fillvalue(data);
 			break;
 		case MSG_LINK:
@@ -2976,6 +3094,15 @@ struct object_template : public TRAIT {
 				break;
 			case MSG_DATA_LAYOUT:
 				cout << object_datalayout_t{file, msg.data};
+				break;
+			case MSG_DATA_STORAGE_FILTER_PIPELINE:
+				cout << object_data_storage_filter_pipeline_t{msg.data};
+				break;
+			case MSG_FILL_VALUE:
+				cout << object_fill_value_t{msg.data};
+				break;
+			case MSG_DATA_STORAGE_FILL_VALUE:
+				cout << object_data_storage_fill_value_t{msg.data};
 				break;
 			}
 
