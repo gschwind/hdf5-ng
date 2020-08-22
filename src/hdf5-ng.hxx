@@ -1923,8 +1923,15 @@ struct object_datalayout_t {
 	// B is the key that we looking for
 	inline int chunk_btree_v1_key_cmp(uint8_t const * a, uint8_t const * b)
 	{
-		// for the key we have to skip the 8 first bits that contain
-		return std::memcmp(a+spec_defs::b_tree_v1_chunk_key_spec::size, b, chunk_dimensionality*sizeof(uint64_t));
+		auto ak = reinterpret_cast<uint64_t const *>(a+spec_defs::b_tree_v1_chunk_key_spec::size);
+		auto bk =  reinterpret_cast<uint64_t const *>(b);
+
+		for (int i = 0; i < chunk_dimensionality; ++i) {
+			if (ak[i] == bk[i]) continue;
+			return (ak[i]<bk[i])?-1:1;
+		}
+
+		return 0;
 	}
 
 	static int chunk_btree_v1_find_index(btree_v1 const & cur, uint64_t key_length, uint64_t const * key)
