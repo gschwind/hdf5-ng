@@ -2101,7 +2101,24 @@ struct object_datalayout_t {
 };
 
 struct object_datatype_t {
+	uint8_t version;
+	uint8_t xclass;
+	bitset<32> flags;
 	uint32_t size_of_elements;
+
+	enum : uint8_t {
+		CLASS_FIXED_POINT            = 0u,
+		CLASS_FLOATING_POINT         = 1u,
+		CLASS_TIME                   = 2u,
+		CLASS_STRING                 = 3u,
+		CLASS_BITFIELD               = 4u,
+		CLASS_OPAQUE                 = 5u,
+		CLASS_COMPOUND               = 6u,
+		CLASS_REFERENCE              = 7u,
+		CLASS_ENUMERATED             = 8u,
+		CLASS_VARIABLE_LEGNTH        = 9u,
+		CLASS_ARRAY                  = 10u
+	};
 
 	object_datatype_t(uint8_t * msg) {
 	//		cout << "parse_datatype " << std::dec <<
@@ -2109,11 +2126,39 @@ struct object_datatype_t {
 	//				" size=" << static_cast<unsigned>(spec_defs::message_datatype_spec::size_of_elements::get(msg))
 	//				<< endl;
 
+		uint8_t version_class = spec_defs::message_datatype_spec::class_and_version::get(msg);
+		version = (version_class&0xf0u)>>4u;
+		xclass  = (version_class&0x0fu)>>0u;
+		flags =
+				spec_defs::message_datatype_spec::class_bit_fields_0::get(msg) <<  0u
+			   |spec_defs::message_datatype_spec::class_bit_fields_1::get(msg) <<  8u
+			   |spec_defs::message_datatype_spec::class_bit_fields_2::get(msg) << 16u;
+
 		size_of_elements = spec_defs::message_datatype_spec::size_of_elements::get(msg);
 	}
 
 	friend ostream & operator<<(ostream & o, object_datatype_t const & datatype)
 	{
+		o << "datatype.version = " << static_cast<int>(datatype.version) << endl;
+
+		o << "datatype.class = ";
+		switch (datatype.xclass) {
+		case CLASS_FIXED_POINT: o << "FIXED_POINT"; break;
+		case CLASS_FLOATING_POINT: o << "FLOATING_POINT"; break;
+		case CLASS_TIME: o << "TIME"; break;
+		case CLASS_STRING: o << "STRING"; break;
+		case CLASS_BITFIELD: o << "BITFIELD"; break;
+		case CLASS_OPAQUE: o << "OPAQUE"; break;
+		case CLASS_COMPOUND: o << "COMPOUND"; break;
+		case CLASS_REFERENCE: o << "REFERENCE"; break;
+		case CLASS_ENUMERATED: o << "ENUMERATED"; break;
+		case CLASS_VARIABLE_LEGNTH: o << "VARIABLE_LEGNTH"; break;
+		case CLASS_ARRAY: o << "ARRAY"; break;
+		default: o << "UNKNOWN";
+		}
+		o << endl;
+
+		o << "datatype.flags = 0b" << datatype.flags << endl;
 		o << "datatype.size_of_elements = " << datatype.size_of_elements << endl;
 		return o;
 	}
@@ -3070,6 +3115,9 @@ struct object_template : public TRAIT {
 			auto msg = *i;
 
 			switch(msg.type) {
+			case MSG_DATATYPE:
+				cout << object_datatype_t{msg.data};
+				break;
 			case MSG_DATASPACE:
 				cout << object_dataspace_t{msg.data};
 				break;

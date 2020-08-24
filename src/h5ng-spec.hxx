@@ -305,8 +305,10 @@ struct message_dataspace_spec : public type_spec {
 // Layout: Dataspace Message - Version 1&2
 struct message_datatype_spec : public type_spec {
 	using class_and_version   = spec<uint8_t,     none>;
-	using class_bit_fields    = spec<uint8_t[3],  class_and_version>;
-	using size_of_elements    = spec<uint32_t,    class_bit_fields>;
+	using class_bit_fields_0  = spec<uint8_t,   class_and_version>;
+	using class_bit_fields_1  = spec<uint8_t,   class_bit_fields_0>;
+	using class_bit_fields_2  = spec<uint8_t,   class_bit_fields_1>;
+	using size_of_elements    = spec<uint32_t,  class_bit_fields_2>;
 	// optional fields
 	enum : uint64_t { size = last<size_of_elements>::size };
 };
