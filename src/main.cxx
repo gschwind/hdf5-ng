@@ -13,7 +13,7 @@ int main(int argc, char const ** argv) {
 	h5ng::h5obj hf(argv[1]);
 
 	stack<pair<string, h5ng::h5obj>> s;
-	vector<h5ng::h5obj> visited;
+	vector<h5ng::h5obj> visited; // avoid recursively print linked object.
 	s.push(make_pair("", hf));
 	while(not s.empty()) {
 		auto cur = s.top();

@@ -34,6 +34,7 @@
 
 #include "h5ng-spec.hxx"
 #include "h5ng.hxx"
+#include "exception.hxx"
 
 #define _STR(x) #x
 #define STR(x) _STR(x)
@@ -661,6 +662,10 @@ struct file_handler_t : public h5ng::file_handler_interface {
 	{
 
 	}
+
+	file_handler_t(file_handler_t const &) = delete;
+	file_handler_t & operator=(file_handler_t const &) = delete;
+
 
 	auto to_address(uint64_t offset) -> uint8_t * {
 		return &memaddr[offset];
@@ -1477,6 +1482,8 @@ struct object_symbol_table_t {
 	 **/
 	size_t _group_find_symbol_table_index(group_btree_v1 const & cur, char const * key) const
 	{
+
+		// TODO: improve with dicotomic algorithm.
 		for(size_t i = 0; i < cur.get_entries_count(); ++i) {
 			char const * link_name = _get_link_name(cur.get_key(SIZE_OF_LENGTH, i+1));
 			if (std::strcmp(key, link_name) <= 0)
@@ -2402,7 +2409,85 @@ struct object_data_storage_fill_value_t {
 };
 
 
-struct object_base : public object, public object_interface
+struct object_link_t {
+	uint8_t type;
+	string name;
+
+	uint64_t offset;
+	string soft_link_value;
+
+
+	object_link_t(uint8_t * msg)
+	{
+		uint8_t version = spec_defs::message_link_spec::version::get(msg);
+		if (version != 1) {
+			throw EXCEPTION("Unknown Link Info version");
+		}
+
+		auto flags = make_bitset(spec_defs::message_link_info_spec::flags::get(msg));
+
+		auto cur = addr_reader{msg+spec_defs::message_link_info_spec::size};
+
+		type = 0u;
+		if (flags.test(3)) {
+			type = cur.read<uint8_t>();
+		}
+
+		uint64_t creation_order = 0xffff'ffff'ffff'ffffu;
+		if (flags.test(2)) {
+			creation_order = cur.read<uint64_t>();
+		}
+
+		// default to zero.
+		uint8_t charset = 0x00u;
+		if (flags.test(4)) {
+//			cout << "has charset" << endl;
+			charset = cur.read<uint8_t>();
+		}
+
+		uint64_t size_of_length_of_name = 1u<<(flags.to_ulong()&0x0000'0011u);
+		uint64_t length_of_name = cur.read_int(size_of_length_of_name);
+
+		name = cur.read_string(length_of_name);
+
+		// TODO: Link information.
+//		cout << "parse_link" << endl;
+//		cout << "flags = " << flags << endl;
+//		cout << "type = " << static_cast<int>(type) << endl;
+//		cout << "creation_order = " << creation_order << endl;
+//		cout << "charset = " << (charset?"UTF-8":"ASCII") << endl;
+//		cout << "size_of_length_of_name = " << size_of_length_of_name << endl;
+//		cout << "length_of_name = " << length_of_name << endl;
+//		cout << "name = " << link_name << endl;
+
+		uint64_t object_addr = undef_offset;
+
+		switch (type) {
+		case 0: { // Hard link
+			offset = cur.read<uint64_t>();
+//			cout << "hardlink address = " << object_addr << endl;
+			break;
+		}
+		case 1: { // soft link
+			auto size = cur.read<uint16_t>();
+			soft_link_value = cur.read_string(size);
+			cout << "soft link = " << soft_link_value << endl;
+			EXCEPTION("Soft link aren't implemented yet");
+			break;
+		}
+		case 64: { // external link
+			EXCEPTION("External link aren't implemented yet");
+			break;
+		}
+		default:
+			throw EXCEPTION("Unhandled link type");
+		}
+
+	}
+
+};
+
+struct object_base : public object
 {
 	using object::file;
 	using object::memory_addr;
@@ -2452,77 +2537,6 @@ struct object_base : public object, public object_interface
 
 	void parse_comment(uint8_t * msg) {
 		_comment = reinterpret_cast<char *>(msg);
-	}
-
-
-	pair<string, uint64_t> parse_link(uint8_t * msg) const
-	{
-		uint8_t version = spec_defs::message_link_spec::version::get(msg);
-		if (version != 1) {
-			throw EXCEPTION("Unknown Link Info version");
-		}
-
-		auto flags = make_bitset(spec_defs::message_link_info_spec::flags::get(msg));
-
-		auto cur = addr_reader{msg+spec_defs::message_link_info_spec::size};
-
-		uint8_t type = 0u;
-		if (flags.test(3)) {
-			type = cur.read<uint8_t>();
-		}
-
-		uint64_t creation_order = 0xffff'ffff'ffff'ffffu;
-		if (flags.test(2)) {
-			creation_order = cur.read<uint64_t>();
-		}
-
-		// default to zero.
-		uint8_t charset = 0x00u;
-		if (flags.test(4)) {
-//			cout << "has charset" << endl;
-			charset = cur.read<uint8_t>();
-		}
-
-		uint64_t size_of_length_of_name = 1u<<(flags.to_ulong()&0x0000'0011u);
-		uint64_t length_of_name = cur.read_int(size_of_length_of_name);
-
-		string link_name = cur.read_string(length_of_name);
-
-		// TODO: Link information.
-//		cout << "parse_link" << endl;
-//		cout << "flags = " << flags << endl;
-//		cout << "type = " << static_cast<int>(type) << endl;
-//		cout << "creation_order = " << creation_order << endl;
-//		cout << "charset = " << (charset?"UTF-8":"ASCII") << endl;
-//		cout << "size_of_length_of_name = " << size_of_length_of_name << endl;
-//		cout << "length_of_name = " << length_of_name << endl;
-//		cout << "name = " << link_name << endl;
-
-		uint64_t object_addr = undef_offset;
-
-		switch (type) {
-		case 0: { // Hard link
-			object_addr = cur.read<uint64_t>();
-//			cout << "hardlink address = " << object_addr << endl;
-			break;
-		}
-		case 1: { // soft link
-			auto size = cur.read<uint16_t>();
-			string soft_link_value = cur.read_string(size);
-			cout << "soft link = " << soft_link_value << endl;
-			EXCEPTION("Soft link aren't implemented yet");
-			break;
-		}
-		case 64: { // external link
-			EXCEPTION("External link aren't implemented yet");
-			break;
-		}
-		default:
-			throw EXCEPTION("Unhandled link type");
-		}
-
-		return {link_name, object_addr};
-
 	}
 
 
@@ -2587,7 +2601,6 @@ struct object_base : public object, public object_interface
 		case MSG_DATA_STORAGE_FILL_VALUE:
 			break;
 		case MSG_LINK:
-			parse_link(data);
 			break;
 		case MSG_DATA_STORAGE:
 			break;
@@ -2654,7 +2667,7 @@ struct object_v1_trait : public object_base {
 
 	object_v1_trait(file_handler_t * file, uint8_t * memory_addr) : object_base{file, memory_addr}
 	{
-		cout << "Creating object v1" << endl;
+
 	}
 
 	struct message_iterator_t {
@@ -2786,7 +2799,7 @@ struct object_v2_trait : public object_base {
 
 	object_v2_trait(file_handler_t * file, uint8_t * memory_addr) : object_base{file, memory_addr}
 	{
-		cout << "Creating object v2" << endl;
+
 	}
 
 	uint64_t get_message_header_size() const {
@@ -2975,7 +2988,7 @@ struct object_v2_trait : public object_base {
 };
 
 template<typename TRAIT>
-struct object_template : public TRAIT {
+struct object_template : public TRAIT, public object_interface {
 
 	using TRAIT::object::file;
 	using TRAIT::object::memory_addr;
@@ -2997,7 +3010,6 @@ struct object_template : public TRAIT {
 
 	virtual auto operator[](string const & name) const -> h5obj override
 	{
-
 		uint64_t offset = undef_offset;
 
 		for (auto i = get_message_iterator(); not i.end() and offset == undef_offset; ++i) {
@@ -3005,8 +3017,10 @@ struct object_template : public TRAIT {
 
 			switch (msg.type) {
 			case MSG_LINK: {
-					auto link = TRAIT::object_base::parse_link(msg.data);
-					offset = link.second;
+					auto link = object_link_t{msg.data};
+					if (link.name == name) {
+						offset = link.offset;
+					}
 					break;
 				}
 			case MSG_SYMBOL_TABLE: {
@@ -3052,8 +3066,8 @@ struct object_template : public TRAIT {
 
 			switch (msg.type) {
 			case MSG_LINK: {
-					auto link = TRAIT::object_base::parse_link(msg.data);
-					ret.push_back(link.first);
+					auto link = object_link_t{msg.data};
+					ret.push_back(link.name);
 					break;
 				}
 			case MSG_SYMBOL_TABLE: {
@@ -3172,7 +3186,7 @@ auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::file_handler_t::make_superblock(uint
 {
 	auto x = superblock_cache.find(offset);
 	if (x != superblock_cache.end())
-		return dynamic_pointer_cast<superblock_interface>(x->second);
+		return x->second;
 
 	switch(version) {
 	case 0:
@@ -3183,9 +3197,10 @@ auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::file_handler_t::make_superblock(uint
 		return superblock_cache[offset] = make_shared<superblock_v2>(this, &memaddr[offset]);
 	case 3:
 		return superblock_cache[offset] = make_shared<superblock_v3>(this, &memaddr[offset]);
+	default:
+		throw EXCEPTION("Unsuported superblock version (%d)", version);
 	}
 
-	throw runtime_error("TODO" STR(__LINE__));
 
 }
 
@@ -3193,12 +3208,13 @@ template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH>
 auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::file_handler_t::make_object(uint64_t offset) -> shared_ptr<object_interface>
 {
 	auto x = object_cache.find(offset);
-	if (x != object_cache.end())
+	if (x != object_cache.end()) {
 		return x->second;
+	}
 
-	int version = memaddr[offset+OFFSET_V1_OBJECT_HEADER_VERSION];
-	if (version == 1) {
-		cout << "creating object at " << std::hex << offset << endl;
+	uint8_t version = memaddr[offset+OFFSET_V1_OBJECT_HEADER_VERSION];
+	if (version == 1u) {
+		cout << "Creating object v1 at 0x" << std::setw(8) << std::setfill('0') << std::hex << offset << endl;
 		return (object_cache[offset] = make_shared<object_template<object_v1_trait>>(this, &memaddr[offset]));
 	} else if (version == 'O') {
 		uint32_t sign = *reinterpret_cast<uint32_t*>(&memaddr[offset]);
@@ -3206,12 +3222,13 @@ auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::file_handler_t::make_object(uint64_t
 			throw EXCEPTION("Unexpected signature (0x%08x)", sign);
 		version = memaddr[offset+OFFSET_V2_OBJECT_HEADER_VERSION];
 		if (version != 2)
-			throw EXCEPTION("Not implemented object version %d", version);
-		cout << "creating object at " << std::hex << offset << endl;
+			throw EXCEPTION("Unsupported object version (%d)", version);
+		cout << "Creating object v2 at 0x" << std::setw(8) << std::setfill('0') << std::hex << offset << endl;
 		return (object_cache[offset] = make_shared<object_template<object_v2_trait>>(this, &memaddr[offset]));
 	}
 
-	throw runtime_error("TODO " STR(__LINE__));
+	throw EXCEPTION("Invalid object @(0x%x)", offset);
+
 }
 
 template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH> template <typename record_type>
@@ -3276,7 +3293,7 @@ struct _for_each1<J, I, ARGS...> {
 template<int J>
 struct _for_each1<J> {
 	static shared_ptr<file_handler_interface> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_length) {
-		throw runtime_error("TODO" STR(__LINE__));
+		throw EXCEPTION("Unsupported offset and length size combination (%d)", size_of_length);
 	}
 };
 
@@ -3297,7 +3314,7 @@ struct _for_each0<J, ARGS...> {
 template<>
 struct _for_each0<> {
 	static shared_ptr<file_handler_interface> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_offset, int size_of_length) {
-		throw runtime_error("TODO" STR(__LINE__));
+		throw EXCEPTION("Unsupported offset and length size combination (%d,%d)", size_of_offset, size_of_length);
 	}
 };
 
@@ -3338,11 +3355,12 @@ struct _h5file : public _h5obj {
 	shared_ptr<_h5obj> _root_object;
 
 	template<typename T>
-	T& get(uint64_t offset) {
+	T& get(uint64_t offset) const {
 		return *reinterpret_cast<T*>(&data[offset]);
 	}
 
-	uint64_t lookup_for_superblock() {
+	uint64_t lookup_for_superblock() const
+	{
 		uint64_t const sign = 0x0a1a0a0d46444889UL;
 		uint64_t block_offset = 0;
 		if (sign == get<uint64_t>(block_offset)) {
@@ -3359,15 +3377,16 @@ struct _h5file : public _h5obj {
 	}
 
 
-	_h5file(string const & filename) {
+	_h5file(string const & filename)
+	{
 		fd = open(filename.c_str(), O_RDONLY);
 		if (fd < 0)
-			throw runtime_error("TODO");
+			throw EXCEPTION("Fail to open file `%s'", filename);
 		struct stat st;
 		fstat(fd, &st);
 		data = static_cast<uint8_t*>(mmap(0, st.st_size, PROT_READ, MAP_SHARED, fd, 0));
 		if (data == MAP_FAILED)
-			throw runtime_error("TODO");
+			throw EXCEPTION("Fail to mmap the file `%s'", filename);
 		file_size = st.st_size;
 
 		uint64_t superblock_offset = lookup_for_superblock();
@@ -3375,15 +3394,15 @@ struct _h5file : public _h5obj {
 
 		int version = get<uint8_t>(superblock_offset+OFFSET_VERSION);
 		if(version > 3) {
-			throw runtime_error("invalid hdf5 file version");
+			throw EXCEPTION("Unsupported hdf5 file version (%d)", version);
 		}
 
 		int size_of_offset = get<uint8_t>(superblock_offset+OFFSETX[version].offset_of_size_offset);
 		int size_of_length = get<uint8_t>(superblock_offset+OFFSETX[version].offset_of_size_length);
 
-		cout << "version = " << version << endl;
-		cout << "size_of_offset = " << size_of_offset << endl;
-		cout << "size_of_length = " << size_of_length << endl;
+		cout << "file.version = " << version << endl;
+		cout << "file.size_of_offset = " << size_of_offset << endl;
+		cout << "file.size_of_length = " << size_of_length << endl;
 
 		/* folowing HDF5 ref implementation size_of_offset and size_of_length must be
 		 * 2, 4, 8, 16 or 32. our implementation is limited to 2, 4 and 8 bytes, uint64_t

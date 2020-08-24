@@ -3,6 +3,7 @@ bin_PROGRAMS = \
 
 
 dummy_SOURCES = \
+	exception.hxx \
 	h5ng-spec.hxx \
 	h5ng.hxx \
 	h5ng.cxx \
