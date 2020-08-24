@@ -2270,6 +2270,7 @@ struct object_fill_value_t {
 
 	friend ostream & operator<< (ostream & o, object_fill_value_t const & f)
 	{
+		o << "fillvalue_old.size = " << f.value.size() << endl;
 		return o << "fillvalue_old.value = " << vector_to_hex_string(f.value) << endl;
 	}
 };
@@ -2345,6 +2346,7 @@ struct object_data_storage_fill_value_t {
 	friend ostream & operator<< (ostream & o, object_data_storage_fill_value_t const & f)
 	{
 		o << "data_storage_fillvalue.flags = 0b" << f.flags << endl;
+		o << "data_storage_fillvalue.size = " << f.value.size() << endl;
 		if (f.has_fillvalue()) {
 			return o << "data_storage_fillvalue.value = " << vector_to_hex_string(f.value) << endl;
 		} else {
@@ -2359,32 +2361,6 @@ struct object_base : public object, public object_interface
 {
 	using object::file;
 	using object::memory_addr;
-
-	struct {
-		uint8_t * value;
-	} fillvalue;
-
-	void parse_fillvalue_old(uint8_t * msg) {
-//		cout << "parse_datatype " << std::dec <<
-//				" size=" << static_cast<unsigned>(spec_defs::message_fillvalue_old_spec::size_of_fillvalue::get(msg))
-//				<< endl;
-		// TODO
-		fillvalue.value = msg + spec_defs::message_fillvalue_old_spec::size;
-	}
-
-	void parse_fillvalue(uint8_t * msg) {
-//		cout << "parse_datatype " << std::dec <<
-//				" size=" << static_cast<unsigned>(spec_defs::message_fillvalue_spec::version::get(msg)) <<
-//				" space_allocation_time=0x" << std::hex << static_cast<int>(spec_defs::message_fillvalue_spec::space_allocation_time::get(msg)) << std::dec <<
-//				" fillvalue_write_time=0x" << std::hex << static_cast<int>(spec_defs::message_fillvalue_spec::fillvalue_write_time::get(msg)) << std::dec <<
-//				" fillvalue_defined=0x" << std::hex << static_cast<int>(spec_defs::message_fillvalue_spec::fillvalue_defined::get(msg)) << std::dec <<
-//				endl;
-		// TODO
-		if (spec_defs::message_fillvalue_spec::version::get(msg) == 1 or spec_defs::message_fillvalue_spec::fillvalue_defined::get(msg) != 0) {
-			fillvalue.value = msg + spec_defs::message_fillvalue_spec::size + sizeof(uint32_t);
-		}
-	}
-
 
 	// Parse shared message to get the actual message offset
 	static uint64_t parse_shared(uint8_t * msg)
@@ -2562,10 +2538,8 @@ struct object_base : public object, public object_interface
 		case MSG_DATATYPE:
 			break;
 		case MSG_FILL_VALUE:
-			parse_fillvalue_old(data);
 			break;
 		case MSG_DATA_STORAGE_FILL_VALUE:
-			parse_fillvalue(data);
 			break;
 		case MSG_LINK:
 			parse_link(data);
