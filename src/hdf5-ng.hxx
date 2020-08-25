@@ -1564,10 +1564,10 @@ struct object_symbol_table_t {
 struct object_attribute_info_t {
 	file_handler_t * file;
 
-	uint64_t maximum_creation_index;
-	uint64_t fractal_heap_address;
-	uint64_t attribute_name_btree_address;
-	uint64_t attribute_creation_order_btree_address;
+	uint16_t maximum_creation_index;
+	offset_type fractal_heap_address;
+	offset_type attribute_name_btree_address;
+	offset_type attribute_creation_order_btree_address;
 
 
 	object_attribute_info_t(file_handler_t * file, uint8_t * msg) : file{file}
@@ -2183,9 +2183,9 @@ struct object_datatype_t {
 struct object_link_info_t {
 	bitset<8> flags;
 	uint64_t maximum_creation_index;
-	uint64_t fractal_head_address;
-	uint64_t name_index_b_tree_address;
-	uint64_t creation_order_index_address;
+	offset_type fractal_head_address;
+	offset_type name_index_b_tree_address;
+	offset_type creation_order_index_address;
 
 	object_link_info_t(uint8_t * msg)
 	{
@@ -2421,7 +2421,7 @@ struct object_link_t {
 	uint8_t type;
 	string name;
 
-	uint64_t offset;
+	offset_type offset;
 	string soft_link_value;
 
 
@@ -2472,7 +2472,7 @@ struct object_link_t {
 
 		switch (type) {
 		case 0: { // Hard link
-			offset = cur.read<uint64_t>();
+			offset = cur.read<offset_type>();
 //			cout << "hardlink address = " << object_addr << endl;
 			break;
 		}
