@@ -1432,6 +1432,15 @@ struct object_message_handler_t {
 	uint16_t size;   //< size of message in the current message block, not the actual size, may be shared or padded
 	bitset<8> flags; //< flags of current messages
 	uint8_t * data;  //< pointer to message data
+
+
+	friend ostream & operator<<(ostream & o,  object_message_handler_t const & msg)
+	{
+		return o << "<object_message_handler_t type=0x" << std::hex << std::setw(4) << std::setfill('0') << msg.type
+				<< ", size=" << msg.size
+				<< ", flags=0b" << msg.flags
+				<< ", data=" << reinterpret_cast<void*>(msg.data) << ">";
+	}
 };
 
 
@@ -1468,7 +1477,6 @@ struct object_symbol_table_t {
 		group_symbol_table table{file->to_address(group_symbol_table_offset)};
 		for(auto symbol_table_entry: table.get_symbole_entry_list()) {
 			char const * link_name = _get_link_name(symbol_table_entry->link_name_offset());
-			cout << "check link name = " << link_name << endl;
 			if (std::strcmp(key, link_name) == 0)
 				return symbol_table_entry->offset_header_address();
 		}
@@ -2046,7 +2054,7 @@ struct object_datalayout_t {
 		}
 		case object_datalayout_t::LAYOUT_CHUNKED: {
 			o << "datalayout.layout_class = CHUNKED" << endl;
-			o << "datalayout.chunk_flags = " << static_cast<int>(datalayout.chunk_flags) << endl;
+			o << "datalayout.chunk_flags = 0b" << make_bitset(datalayout.chunk_flags) << endl;
 			o << "datalayout.chunk_dimensionality = " << static_cast<int>(datalayout.chunk_dimensionality) << endl;
 			o << "datalayout.chunk_shape = " << datalayout.chunk_shape << endl;
 			o << "datalayout.chunk_size_of_element = " << datalayout.chunk_size_of_element << endl;
@@ -2706,6 +2714,8 @@ struct object_v1_trait : public object_base {
 				.data  = _cur + message_spec::size
 			};
 
+//			cout << ret << endl;
+
 			if (ret.flags.test(1)) { // if the message is shared
 				ret.data = file->to_address(parse_shared(ret.data));
 			}
@@ -2759,13 +2769,17 @@ struct object_v1_trait : public object_base {
 
 	message_iterator_t get_message_iterator() const
 	{
-		uint64_t offset = file->to_offset(&memory_addr[spec::size]);
-		uint64_t align_offset =  align_forward<8>(offset);
+		// The specification is unclear about the message alignement.
+		// It's seems the HDF5 group implementation align regarding object header and do not make
+		// absolute 8-byte alignment of the offset.
 
-		// length - 4 because of checksum.
 		uint64_t length = spec::header_size::get(memory_addr);
+		return message_iterator_t{file, &memory_addr[spec::size+4], length};
 
-		return message_iterator_t{file, file->to_address(align_offset), length-(align_offset-offset)};
+		// Folowing the rules provided by the spesification the folowing is correct:
+//		uint64_t offset = file->to_offset(&memory_addr[spec::size]);
+//		uint64_t align_offset =  align_forward<8>(offset);
+//		return message_iterator_t{file, file->to_address(align_offset), length-(align_offset-offset)};
 
 	}
 
