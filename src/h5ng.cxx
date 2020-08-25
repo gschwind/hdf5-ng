@@ -206,6 +206,13 @@ ostream & operator<<(ostream & o, object_comment_t const & comment)
 	return o << "comment.value = " << comment.value << endl;
 }
 
+ostream & operator<<(ostream & o, object_modification_time_t const & modification_time)
+{
+	o << "modification_time.version = " << static_cast<int>(modification_time.version) << endl;
+	o << "modification_time.time = " << modification_time.time << endl;
+	return o;
+}
+
 } // h5ng
 
 

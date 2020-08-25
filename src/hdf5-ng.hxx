@@ -2225,6 +2225,19 @@ struct object_comment_t : public h5ng::object_comment_t {
 };
 
 
+struct object_modification_time_t : public h5ng::object_modification_time_t {
+
+	object_modification_time_t(uint8_t * msg)
+	{
+		version = spec_defs::message_object_modification_time_spec::version::get(msg);
+		if (version != 1)
+			throw EXCEPTION("unknown modification time version (%d)", version);
+		time = spec_defs::message_object_modification_time_spec::time::get(msg);
+	}
+
+};
+
+
 struct object_base : public object
 {
 	using object::file;
@@ -2845,6 +2858,9 @@ struct object_template : public TRAIT, public object_interface {
 				break;
 			case MSG_OBJECT_COMMENT:
 				cout << object_comment_t{msg.data};
+				break;
+			case MSG_OBJECT_MODIFICATION_TIME:
+				cout << object_modification_time_t{msg.data};
 				break;
 			}
 

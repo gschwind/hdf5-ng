@@ -271,6 +271,14 @@ struct object_comment_t {
 
 };
 
+struct object_modification_time_t {
+	uint8_t version;
+	uint32_t time;
+
+	friend ostream & operator<<(ostream & o, object_modification_time_t const & modification_time);
+
+};
+
 
 struct _h5obj {
 	_h5obj() = default;
