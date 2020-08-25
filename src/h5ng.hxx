@@ -264,6 +264,13 @@ struct object_group_info_t {
 
 };
 
+struct object_comment_t {
+	string value;
+
+	friend ostream & operator<<(ostream & o, object_comment_t const & comment);
+
+};
+
 
 struct _h5obj {
 	_h5obj() = default;

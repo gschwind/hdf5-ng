@@ -190,7 +190,8 @@ ostream & operator<< (ostream & o, object_data_storage_fill_value_t const & f)
 	}
 }
 
-ostream & operator<<(ostream & o, object_group_info_t const & group_info) {
+ostream & operator<<(ostream & o, object_group_info_t const & group_info)
+{
 		o << "group_info.version = " << static_cast<int>(group_info.version) << endl;
 		o << "group_info.flags = 0b" << group_info.flags << endl;
 		o << "group_info.maximum_compact_value = " << group_info.maximum_compact_value << endl;
@@ -198,6 +199,11 @@ ostream & operator<<(ostream & o, object_group_info_t const & group_info) {
 		o << "group_info.estimated_number_of_entry = " << group_info.estimated_number_of_entry << endl;
 		o << "group_info.estimated_link_name_length_entry = " << group_info.estimated_link_name_length_entry << endl;
 		return o;
+}
+
+ostream & operator<<(ostream & o, object_comment_t const & comment)
+{
+	return o << "comment.value = " << comment.value << endl;
 }
 
 } // h5ng

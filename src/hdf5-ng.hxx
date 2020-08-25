@@ -2215,6 +2215,16 @@ struct object_group_info_t : public h5ng::object_group_info_t {
 
 };
 
+struct object_comment_t : public h5ng::object_comment_t {
+
+	object_comment_t(uint8_t * msg)
+	{
+		value = reinterpret_cast<char *>(msg);
+	}
+
+};
+
+
 struct object_base : public object
 {
 	using object::file;
@@ -2261,17 +2271,9 @@ struct object_base : public object
 		_modification_time = spec_defs::message_object_modification_time_spec::time::get(msg);
 	}
 
-	char const * _comment;
-
-	void parse_comment(uint8_t * msg) {
-		_comment = reinterpret_cast<char *>(msg);
-	}
-
-
 	object_base(file_handler_t * file, uint8_t * addr) : object{file, addr}
 	{
 		_modification_time = 0;
-		_comment = nullptr;
 	}
 
 	void dispatch_message(uint16_t type, uint8_t * data)
@@ -2305,7 +2307,6 @@ struct object_base : public object
 			// ignore attribute message
 			break;
 		case MSG_OBJECT_COMMENT:
-			parse_comment(data);
 			break;
 		case MSG_OBJECT_MODIFICATION_TIME_OLD:
 			break;
@@ -2841,6 +2842,9 @@ struct object_template : public TRAIT, public object_interface {
 				break;
 			case MSG_GROUP_INFO:
 				cout << object_group_info_t{msg.data};
+				break;
+			case MSG_OBJECT_COMMENT:
+				cout << object_comment_t{msg.data};
 				break;
 			}
 
