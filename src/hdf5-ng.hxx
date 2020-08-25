@@ -1444,11 +1444,8 @@ struct object_message_handler_t {
 };
 
 
-struct object_symbol_table_t {
+struct object_symbol_table_t : public h5ng::object_symbol_table_t {
 	file_handler_t * file;
-
-	offset_type local_heap;
-	offset_type group_btree_v1_root;
 
 	// Create the symbole table from message.
 	object_symbol_table_t(file_handler_t * file, uint8_t * msg) : file{file}
@@ -1561,14 +1558,8 @@ struct object_symbol_table_t {
 };
 
 // Attributes info
-struct object_attribute_info_t {
+struct object_attribute_info_t : public h5ng::object_attribute_info_t {
 	file_handler_t * file;
-
-	uint16_t maximum_creation_index;
-	offset_type fractal_heap_address;
-	offset_type attribute_name_btree_address;
-	offset_type attribute_creation_order_btree_address;
-
 
 	object_attribute_info_t(file_handler_t * file, uint8_t * msg) : file{file}
 	{
@@ -1602,11 +1593,7 @@ struct object_attribute_info_t {
 };
 
 
-struct object_dataspace_t {
-	uint8_t rank;
-	vector<uint64_t> shape;
-	vector<uint64_t> max_shape;
-	vector<uint64_t> permutation; // Never implement in official lib.
+struct object_dataspace_t : public h5ng::object_dataspace_t {
 
 	object_dataspace_t(uint8_t * msg) {
 	//		cout << "parse_dataspace " << std::dec <<
@@ -1675,105 +1662,10 @@ struct object_dataspace_t {
 
 	}
 
-	friend ostream & operator<<(ostream & o,  object_dataspace_t const & dataspace)
-	{
-		o << "dataspace.rank = " << static_cast<int>(dataspace.rank) << endl;
-		o << "dataspace.shape = " << dataspace.shape << endl;
-		o << "dataspace.max_shape = " << dataspace.max_shape << endl;
-		o << "dataspace.permutation = " << dataspace.permutation << endl;
-
-		return o;
-	}
-
 };
 
-struct object_datalayout_t {
+struct object_datalayout_t : public h5ng::object_datalayout_t {
 	file_handler_t * file;
-
-	uint8_t version;
-
-	enum layout_class_e : uint8_t {
-		LAYOUT_COMPACT       = 0u,
-		LAYOUT_CONTIGUOUS    = 1u,
-		LAYOUT_CHUNKED       = 2u,
-		LAYOUT_VIRTUAL       = 3u,
-	};
-
-	uint8_t layout_class;
-
-	// COMPACT LAYOUT
-	uint8_t           compact_dimensionality;      //< same as dataspace.rank+1
-	offset_type       compact_data_address;
-	uint32_t          compact_data_size;
-	vector<uint32_t>  compact_shape;               //< same as dataspace.shape
-
-	// CONTIGUOUS LAYOUT
-	uint8_t           contiguous_dimensionality;   //< same as dataspace.rank+1
-	offset_type       contiguous_data_address;
-	vector<uint32_t>  contiguous_shape;            //< same as dataspace.shape
-	length_type       contiguous_data_size;
-
-	// CHUNKED LAYOUT
-	uint8_t           chunk_flags;
-	uint8_t           chunk_dimensionality;        //< same as dataspace.rank+1
-	uint8_t           chunk_indexing_type;
-	vector<uint32_t>  chunk_shape;
-	uint32_t          chunk_size_of_element;       //< same as datatype.size_of_elements
-
-	enum chunk_indexing_type_e : uint8_t {
-		CHUNK_INDEXING_BTREE_V1          = 0u,
-		CHUNK_INDEXING_SINGLE_CHUNK      = 1u,
-		CHUNK_INDEXING_IMPLICIT          = 2u,
-		CHUNK_INDEXING_FIXED_ARRAY       = 3u,
-		CHUNK_INDEXING_EXTENSIBLE_ARRAY  = 4u,
-		CHUNK_INDEXING_BTREE_V2          = 5u
-	};
-
-	union {
-		// Undef
-		struct {
-			offset_type       data_address;
-		} chunk_btree_v1;
-
-		// Single Chunk data
-		struct {
-			length_type       size_of_filtered_chunk;
-			uint32_t          filters;
-			offset_type       data_address;
-		} chunk_single_chunk;
-
-		struct {
-			offset_type       data_address;
-		} chunk_implicit;
-
-		// Fixed Array data
-		struct {
-			uint8_t           page_bits;
-			offset_type       data_address;
-		} chunk_fixed_array;
-
-		// Extensible Array data
-		struct {
-			uint8_t           max_bits;
-			uint8_t           index_elements;
-			uint8_t           min_pointers;
-			uint8_t           min_elements;
-			uint16_t          page_bits;
-			offset_type       data_address;
-		} chunk_extensible_array;
-
-		// B-Tree V2 data
-		struct {
-			uint32_t          node_size;
-			uint8_t           split_percent;
-			uint8_t           merge_percent;
-			offset_type       data_address;
-		} chunk_btree_v2;
-
-	};
-
-	// TODO: VIRTUAL LAYOUT
-
 
 	object_datalayout_t(file_handler_t * file, uint8_t * msg) : file{file}
 	{
@@ -2031,109 +1923,9 @@ struct object_datalayout_t {
 		return ret;
 	}
 
-	friend ostream & operator<<(ostream & o, object_datalayout_t const & datalayout)
-	{
-		o << "datalayout.version = " << static_cast<int>(datalayout.version) << endl;
-
-		switch(datalayout.layout_class) {
-		case object_datalayout_t::LAYOUT_COMPACT: {
-			o << "datalayout.layout_class = COMPACT" << endl;
-			o << "datalayout.compact_dimensionality = " << static_cast<int>(datalayout.compact_dimensionality) << endl;
-			o << "datalayout.compact_data_address = " << datalayout.compact_data_address << endl;
-			o << "datalayout.compact_data_size = " << datalayout.compact_data_size << endl;
-			o << "datalayout.compact_shape = " << datalayout.compact_shape << endl;
-			 break;
-		}
-		case object_datalayout_t::LAYOUT_CONTIGUOUS: {
-			o << "datalayout.layout_class = CONTIGUOUS" << endl;
-			o << "datalayout.contiguous_dimensionality = " << static_cast<int>(datalayout.contiguous_dimensionality) << endl;
-			o << "datalayout.contiguous_data_address = " << datalayout.contiguous_data_address << endl;
-			o << "datalayout.contiguous_shape = " << datalayout.contiguous_shape << endl;
-			o << "datalayout.contiguous_data_size = " << datalayout.contiguous_data_size << endl;
-			break;
-		}
-		case object_datalayout_t::LAYOUT_CHUNKED: {
-			o << "datalayout.layout_class = CHUNKED" << endl;
-			o << "datalayout.chunk_flags = 0b" << make_bitset(datalayout.chunk_flags) << endl;
-			o << "datalayout.chunk_dimensionality = " << static_cast<int>(datalayout.chunk_dimensionality) << endl;
-			o << "datalayout.chunk_shape = " << datalayout.chunk_shape << endl;
-			o << "datalayout.chunk_size_of_element = " << datalayout.chunk_size_of_element << endl;
-
-			switch (datalayout.chunk_indexing_type) {
-				case CHUNK_INDEXING_BTREE_V1:
-					o << "datalayout.chunk_indexing_type = BTREE_V1" << endl;
-					o << "datalayout.chunk_btree_v1.data_address = " << datalayout.chunk_btree_v1.data_address << endl;
-					break;
-				case CHUNK_INDEXING_SINGLE_CHUNK:
-					o << "datalayout.chunk_indexing_type = SINGLE_CHUNK" << endl;
-					o << "datalayout.chunk_single_chunk.size_of_filtered_chunk = " << datalayout.chunk_single_chunk.size_of_filtered_chunk << endl;
-					o << "datalayout.chunk_single_chunk.filters = " << datalayout.chunk_single_chunk.filters << endl;
-					o << "datalayout.chunk_single_chunk.data_address = " << datalayout.chunk_single_chunk.data_address << endl;
-					break;
-				case CHUNK_INDEXING_IMPLICIT:
-					o << "datalayout.chunk_indexing_type = IMPLICIT" << endl;
-					o << "datalayout.chunk_implicit.data_address = " << datalayout.chunk_implicit.data_address << endl;
-					break;
-				case CHUNK_INDEXING_FIXED_ARRAY:
-					o << "datalayout.chunk_indexing_type = FIXED_ARRAY" << endl;
-					o << "datalayout.chunk_fixed_array.page_bits = " << datalayout.chunk_fixed_array.page_bits << endl;
-					o << "datalayout.chunk_fixed_array.data_address = " << datalayout.chunk_fixed_array.data_address << endl;
-					break;
-				case CHUNK_INDEXING_EXTENSIBLE_ARRAY:
-					o << "datalayout.chunk_indexing_type = EXTENSIBLE_ARRAY" << endl;
-					o << "datalayout.chunk_extensible_array.max_bits = " << datalayout.chunk_extensible_array.max_bits << endl;
-					o << "datalayout.chunk_extensible_array.index_elements = " << datalayout.chunk_extensible_array.index_elements << endl;
-					o << "datalayout.chunk_extensible_array.min_elements = " << datalayout.chunk_extensible_array.min_elements << endl;
-					o << "datalayout.chunk_extensible_array.min_pointers = " << datalayout.chunk_extensible_array.min_pointers << endl;
-					o << "datalayout.chunk_extensible_array.page_bits = " << datalayout.chunk_extensible_array.page_bits << endl;
-					break;
-				case CHUNK_INDEXING_BTREE_V2:
-					o << "datalayout.chunk_indexing_type = BTREE_V2" << endl;
-					o << "datalayout.chunk_btree_v2.node_size = " << datalayout.chunk_btree_v2.node_size << endl;
-					o << "datalayout.chunk_btree_v2.split_percent = " << datalayout.chunk_btree_v2.split_percent << endl;
-					o << "datalayout.chunk_btree_v2.merge_percent = " << datalayout.chunk_btree_v2.merge_percent << endl;
-					o << "datalayout.chunk_btree_v2.data_address = " << datalayout.chunk_btree_v2.data_address << endl;
-					break;
-				default:
-					o << "datalayout.chunk_indexing_type = UNSUPPORTED" << endl;
-					break;
-			}
-
-			break;
-		}
-		case object_datalayout_t::LAYOUT_VIRTUAL: {
-			o << "datalayout.layout_class = VIRTUAL" << endl;
-			break;
-		}
-		default:
-			o << "datalayout.layout_class = UNSUPPORTED" << endl;
-			break;
-		}
-
-		return o;
-	}
-
 };
 
-struct object_datatype_t {
-	uint8_t version;
-	uint8_t xclass;
-	bitset<32> flags;
-	uint32_t size_of_elements;
-
-	enum : uint8_t {
-		CLASS_FIXED_POINT            = 0u,
-		CLASS_FLOATING_POINT         = 1u,
-		CLASS_TIME                   = 2u,
-		CLASS_STRING                 = 3u,
-		CLASS_BITFIELD               = 4u,
-		CLASS_OPAQUE                 = 5u,
-		CLASS_COMPOUND               = 6u,
-		CLASS_REFERENCE              = 7u,
-		CLASS_ENUMERATED             = 8u,
-		CLASS_VARIABLE_LEGNTH        = 9u,
-		CLASS_ARRAY                  = 10u
-	};
+struct object_datatype_t : public h5ng::object_datatype_t {
 
 	object_datatype_t(uint8_t * msg) {
 	//		cout << "parse_datatype " << std::dec <<
@@ -2152,40 +1944,10 @@ struct object_datatype_t {
 		size_of_elements = spec_defs::message_datatype_spec::size_of_elements::get(msg);
 	}
 
-	friend ostream & operator<<(ostream & o, object_datatype_t const & datatype)
-	{
-		o << "datatype.version = " << static_cast<int>(datatype.version) << endl;
-
-		o << "datatype.class = ";
-		switch (datatype.xclass) {
-		case CLASS_FIXED_POINT: o << "FIXED_POINT"; break;
-		case CLASS_FLOATING_POINT: o << "FLOATING_POINT"; break;
-		case CLASS_TIME: o << "TIME"; break;
-		case CLASS_STRING: o << "STRING"; break;
-		case CLASS_BITFIELD: o << "BITFIELD"; break;
-		case CLASS_OPAQUE: o << "OPAQUE"; break;
-		case CLASS_COMPOUND: o << "COMPOUND"; break;
-		case CLASS_REFERENCE: o << "REFERENCE"; break;
-		case CLASS_ENUMERATED: o << "ENUMERATED"; break;
-		case CLASS_VARIABLE_LEGNTH: o << "VARIABLE_LEGNTH"; break;
-		case CLASS_ARRAY: o << "ARRAY"; break;
-		default: o << "UNKNOWN";
-		}
-		o << endl;
-
-		o << "datatype.flags = 0b" << datatype.flags << endl;
-		o << "datatype.size_of_elements = " << datatype.size_of_elements << endl;
-		return o;
-	}
 };
 
 
-struct object_link_info_t {
-	bitset<8> flags;
-	uint64_t maximum_creation_index;
-	offset_type fractal_head_address;
-	offset_type name_index_b_tree_address;
-	offset_type creation_order_index_address;
+struct object_link_info_t : public h5ng::object_link_info_t {
 
 	object_link_info_t(uint8_t * msg)
 	{
@@ -2217,43 +1979,9 @@ struct object_link_info_t {
 
 	}
 
-	friend ostream & operator<<(ostream & o, object_link_info_t const & link_info)
-	{
-		o << "link_info.flags = " << link_info.flags << endl;
-		o << "link_info.maximum_creation_index = " << link_info.maximum_creation_index << endl;
-		o << "link_info.fractal_head_address = " << link_info.fractal_head_address << endl;
-		o << "link_info.name_index_b_tree_address = " << link_info.name_index_b_tree_address << endl;
-		o << "link_info.creation_order_index_address = " << link_info.creation_order_index_address << endl;
-		return o;
-	}
-
 };
 
-struct object_data_storage_filter_pipeline_t {
-
-	struct filter {
-		uint16_t id;
-		string name;
-		bitset<16> flags;
-		vector<uint32_t> params;
-
-		filter(uint16_t id, string name, bitset<16> flags, vector<uint32_t> const & params) :
-			id{id},
-			name{name},
-			flags{flags},
-			params{params}
-		{
-
-		}
-
-		friend ostream & operator<< (ostream & o, filter const & f)
-		{
-			return o << "<filter id=" << f.id <<", name=" << f.name << ", flags=" << f.flags << ", client data=" << f.params << ">";
-		}
-
-	};
-
-	vector<filter> filters;
+struct object_data_storage_filter_pipeline_t : public h5ng::object_data_storage_filter_pipeline_t {
 
 	object_data_storage_filter_pipeline_t(uint8_t * msg)
 	{
@@ -2308,19 +2036,9 @@ struct object_data_storage_filter_pipeline_t {
 
 	}
 
-
-	friend ostream & operator<< (ostream & o, object_data_storage_filter_pipeline_t const & f)
-	{
-		for (int i = 0; i < f.filters.size(); ++i) {
-			o << "data_storage_filter_pipeline.filter["<<i<<"] = " << f.filters[i] << endl;
-		}
-		return o;
-	}
-
 };
 
-struct object_fill_value_t {
-	vector<uint8_t> value;
+struct object_fill_value_t : h5ng::object_fill_value_t {
 
 	object_fill_value_t(uint8_t * msg)
 	{
@@ -2328,16 +2046,9 @@ struct object_fill_value_t {
 		value = cur.read_array<uint8_t>(spec_defs::message_fillvalue_old_spec::size_of_fillvalue::get(msg));
 	}
 
-	friend ostream & operator<< (ostream & o, object_fill_value_t const & f)
-	{
-		o << "fillvalue_old.size = " << f.value.size() << endl;
-		return o << "fillvalue_old.value = " << vector_to_hex_string(f.value) << endl;
-	}
 };
 
-struct object_data_storage_fill_value_t {
-	bitset<8> flags;
-	vector<uint8_t> value;
+struct object_data_storage_fill_value_t : public h5ng::object_data_storage_fill_value_t {
 
 	object_data_storage_fill_value_t(uint8_t * msg)
 	{
@@ -2398,32 +2109,10 @@ struct object_data_storage_fill_value_t {
 
 	}
 
-	bool has_fillvalue() const
-	{
-		return flags.test(5);
-	}
-
-	friend ostream & operator<< (ostream & o, object_data_storage_fill_value_t const & f)
-	{
-		o << "data_storage_fillvalue.flags = 0b" << f.flags << endl;
-		o << "data_storage_fillvalue.size = " << f.value.size() << endl;
-		if (f.has_fillvalue()) {
-			return o << "data_storage_fillvalue.value = " << vector_to_hex_string(f.value) << endl;
-		} else {
-			return o << "data_storage_fillvalue.value = undef" << endl;
-		}
-	}
-
 };
 
 
-struct object_link_t {
-	uint8_t type;
-	string name;
-
-	offset_type offset;
-	string soft_link_value;
-
+struct object_link_t : public h5ng::object_link_t {
 
 	object_link_t(uint8_t * msg)
 	{
