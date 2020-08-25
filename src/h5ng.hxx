@@ -252,6 +252,18 @@ struct object_link_t {
 
 };
 
+struct object_group_info_t {
+	uint8_t version;
+	bitset<8> flags;
+	uint16_t maximum_compact_value;
+	uint16_t minimum_dense_value;
+	uint16_t estimated_number_of_entry;
+	uint16_t estimated_link_name_length_entry;
+
+	friend ostream & operator<<(ostream & o, object_group_info_t const & group_info);
+
+};
+
 
 struct _h5obj {
 	_h5obj() = default;

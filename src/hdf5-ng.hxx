@@ -2184,6 +2184,37 @@ struct object_link_t : public h5ng::object_link_t {
 
 };
 
+struct object_group_info_t : public h5ng::object_group_info_t {
+
+	object_group_info_t(uint8_t * msg)
+	{
+		version = spec_defs::message_link_spec::version::get(msg);
+		if (version != 0) {
+			throw EXCEPTION("Unknown Group Info version");
+		}
+
+		flags = spec_defs::message_link_info_spec::flags::get(msg);
+
+		auto cur = addr_reader{msg+spec_defs::message_link_info_spec::size};
+
+		maximum_compact_value = 0xffffu;
+		minimum_dense_value = 0xffffu;
+		if (flags.test(0)) {
+			maximum_compact_value = cur.read<uint16_t>();
+			minimum_dense_value = cur.read<uint16_t>();
+		}
+
+		estimated_number_of_entry = 0xffffu;
+		estimated_link_name_length_entry = 0xffffu;
+		if (flags.test(1)) {
+			estimated_number_of_entry = cur.read<uint16_t>();
+			estimated_link_name_length_entry = cur.read<uint16_t>();
+		}
+
+	}
+
+};
+
 struct object_base : public object
 {
 	using object::file;
@@ -2237,45 +2268,6 @@ struct object_base : public object
 	}
 
 
-	void parse_group_info(uint8_t * msg)
-	{
-		uint8_t version = spec_defs::message_link_spec::version::get(msg);
-		if (version != 0) {
-			throw EXCEPTION("Unknown Group Info version");
-		}
-
-		auto flags = make_bitset(spec_defs::message_link_info_spec::flags::get(msg));
-
-		uint64_t offset = spec_defs::message_link_info_spec::size;
-
-		uint16_t maximum_compact_value = 0xffffu;
-		uint16_t minimum_dense_value = 0xffffu;
-		if (flags.test(0)) {
-			maximum_compact_value = read_at<uint16_t>(&msg[offset]);
-			offset += 2;
-			minimum_dense_value = read_at<uint16_t>(&msg[offset]);
-			offset += 2;
-		}
-
-		uint16_t estimated_number_of_entry = 0xffffu;
-		uint16_t estimated_link_name_length_entry = 0xffffu;
-		if (flags.test(1)) {
-			estimated_number_of_entry = read_at<uint16_t>(&msg[offset]);
-			offset += 2;
-			estimated_link_name_length_entry = read_at<uint16_t>(&msg[offset]);
-			offset += 2;
-		}
-
-//		cout << "parse_global_info" << endl;
-//		cout << "version = " << static_cast<int>(version) << endl;
-//		cout << "flags = " << flags << endl;
-//		cout << "maximum_compact_value = " << maximum_compact_value << endl;
-//		cout << "minimum_dense_value = " << minimum_dense_value << endl;
-//		cout << "estimated_number_of_entry = " << estimated_number_of_entry << endl;
-//		cout << "estimated_link_name_length_entry = " << estimated_link_name_length_entry << endl;
-
-	}
-
 	object_base(file_handler_t * file, uint8_t * addr) : object{file, addr}
 	{
 		_modification_time = 0;
@@ -2306,12 +2298,9 @@ struct object_base : public object
 		case MSG_BOGUS:
 			break;
 		case MSG_GROUP_INFO:
-			parse_group_info(data);
 			break;
-		case MSG_DATA_STORAGE_FILTER_PIPELINE: {
-			auto filters = object_data_storage_filter_pipeline_t{data};
+		case MSG_DATA_STORAGE_FILTER_PIPELINE:
 			break;
-		}
 		case MSG_ATTRIBUTE:
 			// ignore attribute message
 			break;
@@ -2849,6 +2838,9 @@ struct object_template : public TRAIT, public object_interface {
 				break;
 			case MSG_DATA_STORAGE_FILL_VALUE:
 				cout << object_data_storage_fill_value_t{msg.data};
+				break;
+			case MSG_GROUP_INFO:
+				cout << object_group_info_t{msg.data};
 				break;
 			}
 
