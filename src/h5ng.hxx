@@ -91,19 +91,19 @@ struct object_datalayout_t {
 	uint8_t           compact_dimensionality;      //< same as dataspace.rank+1
 	max_offset_type   compact_data_address;
 	uint32_t          compact_data_size;
-	vector<uint32_t>  compact_shape;               //< same as dataspace.shape
+	vector<uint32_t>  compact_shape;               //< same as dataspace.shape + element spacing
 
 	// CONTIGUOUS LAYOUT
 	uint8_t           contiguous_dimensionality;   //< same as dataspace.rank+1
 	max_offset_type   contiguous_data_address;
-	vector<uint32_t>  contiguous_shape;            //< same as dataspace.shape
+	vector<uint32_t>  contiguous_shape;            //< same as dataspace.shape + element spacing
 	max_length_type   contiguous_data_size;
 
 	// CHUNKED LAYOUT
 	uint8_t           chunk_flags;
 	uint8_t           chunk_dimensionality;        //< same as dataspace.rank+1
 	uint8_t           chunk_indexing_type;
-	vector<uint32_t>  chunk_shape;
+	vector<uint32_t>  chunk_shape;                 //< include element spacing
 	uint32_t          chunk_size_of_element;       //< same as datatype.size_of_elements
 
 	enum chunk_indexing_type_e : uint8_t {
@@ -178,7 +178,7 @@ struct object_datatype_t {
 		CLASS_COMPOUND               = 6u,
 		CLASS_REFERENCE              = 7u,
 		CLASS_ENUMERATED             = 8u,
-		CLASS_VARIABLE_LEGNTH        = 9u,
+		CLASS_VARIABLE_LENGTH        = 9u,
 		CLASS_ARRAY                  = 10u
 	};
 

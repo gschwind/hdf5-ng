@@ -136,7 +136,7 @@ ostream & operator<<(ostream & o, object_datatype_t const & datatype)
 	case tns::CLASS_COMPOUND: o << "COMPOUND"; break;
 	case tns::CLASS_REFERENCE: o << "REFERENCE"; break;
 	case tns::CLASS_ENUMERATED: o << "ENUMERATED"; break;
-	case tns::CLASS_VARIABLE_LEGNTH: o << "VARIABLE_LEGNTH"; break;
+	case tns::CLASS_VARIABLE_LENGTH: o << "VARIABLE_LENGTH"; break;
 	case tns::CLASS_ARRAY: o << "ARRAY"; break;
 	default: o << "UNKNOWN";
 	}

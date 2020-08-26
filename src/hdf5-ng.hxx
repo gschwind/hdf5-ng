@@ -328,6 +328,26 @@ struct object_interface : public _h5obj {
 		throw EXCEPTION("Not implemented");
 	}
 
+	virtual auto dataspace() const -> h5ng::object_dataspace_t {
+		throw EXCEPTION("Not implemented");
+	}
+
+	virtual auto datalayout() const -> h5ng::object_datalayout_t {
+		throw EXCEPTION("Not implemented");
+	}
+
+	virtual auto fillvalue_old() const -> h5ng::object_fill_value_t {
+		throw EXCEPTION("Not implemented");
+	}
+
+	virtual auto fillvalue() const -> h5ng::object_data_storage_fill_value_t {
+		throw EXCEPTION("Not implemented");
+	}
+
+	virtual auto filter_pipeline() const -> h5ng::object_data_storage_filter_pipeline_t {
+		throw EXCEPTION("Not implemented");
+	}
+
 	virtual auto keys() const -> vector<string> override {
 		throw EXCEPTION("Not implemented");
 	}
@@ -496,19 +516,46 @@ struct object_interface : public _h5obj {
 		// ony for continuous or compact.
 		uint64_t element_size = this->element_size();
 
-		auto data_shape = shape();
-		if (data_shape.size() != R)
-			throw EXCEPTION("dataset rank (%d) does not match selection rank (%d)", data_shape.size(), R);
+		object_dataspace_t dataspace;
+		try {
+			dataspace = this->dataspace();
+		} catch (...) {
+
+		}
+
+		object_datalayout_t datalayout;
+		try {
+			datalayout = this->datalayout();
+		} catch (...) {
+
+		}
+
+		object_fill_value_t fillvalue_old;
+		try {
+			fillvalue_old = this->fillvalue_old();
+		} catch (...) {
+
+		}
+
+		object_data_storage_fill_value_t fillvalue;
+		try {
+			fillvalue = this->fillvalue();
+		} catch (...) {
+
+		}
+
+		if (dataspace.shape.size() != R)
+			throw EXCEPTION("dataset rank (%d) does not match selection rank (%d)", dataspace.shape.size(), R);
 
 		array<int64_t, R> data_stride;
 		data_stride[R-1] = element_size;
-		for(size_t i = R-1; i > 0; --i) { data_stride[i-1] = data_stride[i]*data_shape[i]; }
+		for(size_t i = R-1; i > 0; --i) { data_stride[i-1] = data_stride[i]*dataspace.shape[i]; }
 
 		array<int64_t, R> shape;
 		array<int64_t, R> stride;
 		uint8_t * offset = continuous_data();
 		for(size_t i = 0; i < R; ++i) {
-			auto s = selection[i].norm_with_dims(data_shape[i]);
+			auto s = selection[i].norm_with_dims(dataspace.shape[i]);
 			offset += data_stride[i]*s.bgn;
 			stride[i] = data_stride[i]*s.inc;
 			shape[i] = ((s.end - s.bgn) - 1)/s.inc + 1;
@@ -1472,6 +1519,7 @@ struct object_symbol_table_t : public h5ng::object_symbol_table_t {
 	{
 		auto group_symbol_table_offset = _group_find_symbol_table(key);
 		group_symbol_table table{file->to_address(group_symbol_table_offset)};
+		// It's not specified that entry in symbol_table are sorted, thus we must lookup all entry.
 		for(auto symbol_table_entry: table.get_symbole_entry_list()) {
 			char const * link_name = _get_link_name(symbol_table_entry->link_name_offset());
 			if (std::strcmp(key, link_name) == 0)
@@ -1487,21 +1535,40 @@ struct object_symbol_table_t : public h5ng::object_symbol_table_t {
 	 **/
 	size_t _group_find_symbol_table_index(group_btree_v1 const & cur, char const * key) const
 	{
+		size_t lo = 0;
+		size_t hi = cur.get_entries_count();
 
-		// TODO: improve with dicotomic algorithm.
-		for(size_t i = 0; i < cur.get_entries_count(); ++i) {
-			char const * link_name = _get_link_name(cur.get_key(SIZE_OF_LENGTH, i+1));
-			if (std::strcmp(key, link_name) <= 0)
-				return i;
+		{ // sanity check
+			char const * link_name = _get_link_name(cur.get_key(SIZE_OF_LENGTH, lo));
+			if (std::strcmp(key, link_name) <= 0) {
+				throw EXCEPTION("Key `%s' not found", key);
+			}
 		}
-		throw EXCEPTION("Ill-formed group_btree_v1");
+
+		{ // sanity check
+			char const * link_name = _get_link_name(cur.get_key(SIZE_OF_LENGTH, hi));
+			if (not (std::strcmp(key, link_name) <= 0)) {
+				throw EXCEPTION("Key `%s' not found", key);
+			}
+		}
+
+		while ((hi-lo) > 1) {
+			size_t mi = (lo + hi)/2;
+			char const * link_name = _get_link_name(cur.get_key(SIZE_OF_LENGTH, mi));
+			if (std::strcmp(key, link_name) <= 0) {
+				hi = mi;
+			} else {
+				lo = mi;
+			}
+		}
+
+		return lo;
+
 	}
 
 	/** return group_symbole_table that should content the key **/
 	offset_type _group_find_symbol_table(char const * key) const {
 		group_btree_v1 cur{file->to_address(group_btree_v1_root)};
-		if (std::strcmp(key, _get_link_name(cur.get_key(SIZE_OF_LENGTH, cur.get_entries_count()))) > 0)
-			throw EXCEPTION("Key `%s' not found", key);
 
 		while(cur.get_depth() != 0) {
 			size_t i = _group_find_symbol_table_index(cur, key);
@@ -1518,11 +1585,9 @@ struct object_symbol_table_t : public h5ng::object_symbol_table_t {
 		stack<group_btree_v1> stack;
 
 		vector<offset_type> group_symbole_tables;
-		cout << "btree-root = " << std::hex << group_btree_v1_root << std::dec << endl;
 		stack.push(group_btree_v1{file->to_address(group_btree_v1_root)});
 		while(not stack.empty()) {
 			group_btree_v1 cur = stack.top();
-			cout << std::dec << "process node depth=" << cur.get_depth() << " entries_count=" << cur.get_entries_count() << endl;
 			stack.pop();
 			if (cur.get_depth() == 0) {
 				//assert(cur.get_entries_count() <= lK);
@@ -1841,14 +1906,34 @@ struct object_datalayout_t : public h5ng::object_datalayout_t {
 		return 0;
 	}
 
-	static int chunk_btree_v1_find_index(btree_v1 const & cur, uint64_t key_length, uint64_t const * key)
+	// If the key is not found return -1, chunk may be missing it's not an error.
+	static size_t chunk_btree_v1_find_index(btree_v1 const & cur, uint64_t key_length, uint64_t const * key)
 	{
-		for (int i = cur.get_entries_count()-1; i >= 0; --i) {
-			if (chunk_btree_v1_key_cmp(cur.get_key(key_length, i), key) <= 0) {
-				return i;
+
+		size_t lo = 0;
+		size_t hi = cur.get_entries_count();
+
+		// Key not found
+		if (chunk_btree_v1_key_cmp(cur.get_key(key_length, lo), key) <= 0) {
+			return -1;
+		}
+
+		// Key not found
+		if (not (chunk_btree_v1_key_cmp(cur.get_key(key_length, hi), key) <= 0)) {
+			return -1;
+		}
+
+		while (lo - hi > 1) {
+			size_t mi = (lo + hi)/2;
+			if (chunk_btree_v1_key_cmp(cur.get_key(key_length, mi), key) <= 0) {
+				lo = mi;
+			} else {
+				hi = mi;
 			}
 		}
-		return -1;
+
+		return lo;
+
 	}
 
 	chunk_desc_t chunk_btree_v1_find(uint64_t const * key) const
@@ -1861,18 +1946,18 @@ struct object_datalayout_t : public h5ng::object_datalayout_t {
 
 		btree_v1 cur{file->to_address(chunk_btree_v1.data_address)};
 
-		// Are we bellow the first chunk ?
-		if (chunk_btree_v1_key_cmp(cur.get_key(key_length, 0), key) > 0) {
-			return chunk_desc_t{0u,0u,undef_offset};
-		}
-
 		while(cur.get_depth() != 0) {
 			size_t i = chunk_btree_v1_find_index(cur, key);
 			cur = btree_v1{file->to_address(cur.get_node(key_length, i))};
 		}
 
-		int i = chunk_btree_v1_find_index(cur, key);
+		size_t i = chunk_btree_v1_find_index(cur, key);
 		if (i < 0) {
+			return chunk_desc_t{0u,0u,undef_offset};
+		}
+
+		// if the key of the current node does not match the key, the chunk is not found.
+		if (chunk_btree_v1_key_cmp(cur.get_key(key_length, i), i) != 0) {
 			return chunk_desc_t{0u,0u,undef_offset};
 		}
 
@@ -2730,7 +2815,11 @@ struct object_template : public TRAIT, public object_interface {
 					break;
 				}
 			case MSG_SYMBOL_TABLE: {
-					offset = object_symbol_table_t{file, msg.data}[name];
+					try {
+						offset = object_symbol_table_t{file, msg.data}[name];
+					} catch (...) {
+
+					}
 					break;
 				}
 			}
@@ -2754,6 +2843,64 @@ struct object_template : public TRAIT, public object_interface {
 		}
 		throw EXCEPTION("Shape is not defined");
 	}
+
+
+	virtual auto dataspace() const -> h5ng::object_dataspace_t override
+	{
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			if (msg.type == MSG_DATASPACE) {
+				return object_dataspace_t{msg.data};
+			}
+		}
+		throw EXCEPTION("Dataspace Not found!");
+	}
+
+	virtual auto datalayout() const -> h5ng::object_datalayout_t override
+	{
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			if (msg.type == MSG_DATA_LAYOUT) {
+				return object_datalayout_t{file, msg.data};
+			}
+		}
+		throw EXCEPTION("Datalayout Not found!");
+	}
+
+	virtual auto fillvalue_old() const -> h5ng::object_fill_value_t override
+	{
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			if (msg.type == MSG_FILL_VALUE) {
+				return object_fill_value_t{msg.data};
+			}
+		}
+		throw EXCEPTION("Fill Value (Old) Not found!");
+	}
+
+	virtual auto fillvalue() const -> h5ng::object_data_storage_fill_value_t override
+	{
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			if (msg.type == MSG_DATA_STORAGE_FILL_VALUE) {
+				return object_data_storage_fill_value_t{msg.data};
+			}
+		}
+		throw EXCEPTION("Fill Value Not found!");
+	}
+
+
+	virtual auto filter_pipeline() const -> h5ng::object_data_storage_filter_pipeline_t override
+	{
+		for (auto i = get_message_iterator(); not i.end(); ++i) {
+			auto msg = *i;
+			if (msg.type == MSG_DATA_STORAGE_FILTER_PIPELINE) {
+				return object_data_storage_filter_pipeline_t{msg.data};
+			}
+		}
+		throw EXCEPTION("Filter pipeline Not found!");
+	}
+
 
 	virtual size_t shape(int i) const override
 	{
