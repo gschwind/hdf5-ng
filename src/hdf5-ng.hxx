@@ -162,21 +162,16 @@ struct addr_reader {
 		uint64_t ret;
 		switch(s) {
 		case 1:
-			ret = read<uint8_t>();
-			break;
+			return read<uint8_t>();
 		case 2:
-			ret = read<uint16_t>();
-			break;
+			return read<uint16_t>();
 		case 4:
-			ret = read<uint32_t>();
-			break;
+			return read<uint32_t>();
 		case 8:
-			ret = read<uint64_t>();
-			break;
+			return read<uint64_t>();
 		default:
 			throw EXCEPTION("Unexpected read size");
 		}
-		return ret;
 	}
 
 	// Read string, will be zero padded if neadded
@@ -313,6 +308,10 @@ struct object_interface : public _h5obj {
 	virtual ~object_interface() = default;
 
 	virtual auto get_id() const -> uint64_t override {
+		throw EXCEPTION("Not implemented");
+	}
+
+	virtual auto canonical_obj_lookup(string const & name) const -> max_offset_type {
 		throw EXCEPTION("Not implemented");
 	}
 
@@ -666,21 +665,30 @@ struct file_handler_interface {
 
 	virtual auto get_superblock() -> shared_ptr<superblock_interface> = 0;
 
-	virtual auto make_superblock(uint64_t offset) -> shared_ptr<superblock_interface> = 0;
-	virtual auto make_object(uint64_t offset) -> shared_ptr<object_interface> = 0;
+	virtual auto make_superblock(max_offset_type offset) -> shared_ptr<superblock_interface> = 0;
+	virtual auto make_object(max_offset_type offset) -> shared_ptr<object_interface> = 0;
 
 };
+
 
 template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH>
 struct _impl {
 
 using spec_defs = typename h5ng::spec_defs<SIZE_OF_OFFSET, SIZE_OF_LENGTH>;
 
-using offset_type = typename get_type_for_size<SIZE_OF_OFFSET>::type;
-using length_type = typename get_type_for_size<SIZE_OF_LENGTH>::type;
+using offset_type = typename h5ng::unsigned_with_undef<typename get_type_for_size<SIZE_OF_OFFSET>::type>;
+using length_type = typename h5ng::unsigned_with_undef<typename get_type_for_size<SIZE_OF_LENGTH>::type>;
 
-static offset_type constexpr undef_offset = std::numeric_limits<offset_type>::max();
-static length_type constexpr undef_length = std::numeric_limits<length_type>::max();
+static offset_type const undef_offset;
+static length_type const undef_length;
+
+
+
+//max_length_type operator max_length_type(length_type const & v) {
+//	if (v == undef_length)
+//		return undef_max_length;
+//	return v;
+//}
 
 
 static uint64_t get_minimum_storage_size_for(uint64_t count) {
@@ -688,21 +696,29 @@ static uint64_t get_minimum_storage_size_for(uint64_t count) {
 	uint64_t n = 1;
 	while((/*256^n*/(0x1ul<<(n<<3))-1)<count) {
 		n <<= 1; /* n*=2 */
-		if (n == 8) return n; // reach the maximum storage capacity;
+		if (n == 8) break; // reach the maximum storage capacity;
 	}
+
+	if ((/*256^n*/(0x1ul<<(n<<3))-1)<count)
+		throw EXCEPTION("Cannot handle this count (%d)", count);
+
 	return n;
 }
 
 struct file_handler_t : public h5ng::file_handler_interface {
-	mutable map<uint64_t, shared_ptr<superblock_interface>> superblock_cache;
-	mutable map<uint64_t, shared_ptr<object_interface>> object_cache;
+	mutable map<max_offset_type::base_type, shared_ptr<superblock_interface>> superblock_cache;
+	mutable map<max_offset_type::base_type, shared_ptr<object_interface>> object_cache;
+	mutable map<string, shared_ptr<object_interface>> external_file_cache;
+
+	string const abs_filename; //< store the absolute filename, this is require to handle external link
 
 	uint8_t * memaddr;
 
 	int version;
 	uint64_t superblock_offset;
 
-	file_handler_t(uint8_t * memaddr, uint64_t superblock_offset, int version) :
+	file_handler_t(string const & abs_filename, uint8_t * memaddr, uint64_t superblock_offset, int version) :
+		abs_filename{abs_filename},
 		memaddr{memaddr},
 		version{version},
 		superblock_offset{superblock_offset}
@@ -713,6 +729,13 @@ struct file_handler_t : public h5ng::file_handler_interface {
 	file_handler_t(file_handler_t const &) = delete;
 	file_handler_t & operator=(file_handler_t const &) = delete;
 
+	string get_file_pwd() const {
+		auto p = abs_filename.find_last_of('/');
+		if (p != string::npos)
+			return string{&abs_filename[0], &abs_filename[p]};
+		else
+			return string{};
+	}
 
 	auto to_address(uint64_t offset) -> uint8_t * {
 		return &memaddr[offset];
@@ -729,8 +752,8 @@ struct file_handler_t : public h5ng::file_handler_interface {
 
 	// h5ng::file_handler_interface
 
-	virtual auto make_superblock(uint64_t offset) -> shared_ptr<superblock_interface> override;
-	virtual auto make_object(uint64_t offset) -> shared_ptr<object_interface> override;
+	virtual auto make_superblock(max_offset_type offset) -> shared_ptr<superblock_interface> override;
+	virtual auto make_object(max_offset_type offset) -> shared_ptr<object_interface> override;
 
 };
 
@@ -1289,11 +1312,11 @@ struct group_symbol_table_entry {
 
 	group_symbol_table_entry() = delete;
 
-	offset_type & link_name_offset() {
+	offset_type link_name_offset() {
 		return spec::link_name_offset::get(reinterpret_cast<uint8_t*>(this));
 	}
 
-	offset_type & offset_header_address() {
+	offset_type offset_header_address() {
 		return spec::object_header_address::get(reinterpret_cast<uint8_t*>(this));
 	}
 
@@ -1976,7 +1999,7 @@ struct object_datalayout_t : public h5ng::object_datalayout_t {
 		stack<btree_v1> stack;
 
 		// Chunk aren't allocated
-		if (chunk_btree_v1.data_address == undef_offset)
+		if (chunk_btree_v1.data_address == undef_max_offset)
 			return;
 
 		stack.push(btree_v1{file->to_address(chunk_btree_v1.data_address)});
@@ -2799,9 +2822,12 @@ struct object_template : public TRAIT, public object_interface {
 		return file->to_offset(memory_addr);
 	}
 
-	virtual auto operator[](string const & name) const -> h5obj override
+	// lookup for sub-object offset
+	// @input name a canonical object name, i.e. without '/' inside.
+	// @return the object offset within the file or undef_offset if not found.
+	auto canonical_obj_lookup(string const & name) const -> max_offset_type override
 	{
-		uint64_t offset = undef_offset;
+		offset_type offset = undef_offset;
 
 		for (auto i = get_message_iterator(); not i.end() and offset == undef_offset; ++i) {
 			auto msg = *i;
@@ -2826,10 +2852,27 @@ struct object_template : public TRAIT, public object_interface {
 
 		}
 
-		if (offset == undef_offset)
-			throw EXCEPTION("KeyError: Key not found `%s'", name.c_str());
+		return offset;
 
-		return h5obj{file->make_object(offset)};
+	}
+
+
+	virtual auto operator[](string const & name) const -> h5obj override
+	{
+
+//		auto ret = *this;
+//		size_t cpos = 0;
+//		size_t npos = name.find('/', cpos);
+//		if (npos == string::npos) npos = name.size();
+//
+//		if (cpos != npos) {
+//			offset_type offset = ret->_canonical_obj_lookup(name.substr(cpos,npos-cpos));
+//			if (offset == undef_offset)
+//				throw EXCEPTION("KeyError: Key not found `%s'", name.c_str());
+//			ret = h5obj{file->make_object(offset)}
+//		}
+//
+//		return h5obj{file->make_object(offset)};
 	}
 
 	virtual auto shape() const -> vector<size_t> override
@@ -3044,7 +3087,14 @@ struct object_template : public TRAIT, public object_interface {
 }; // struct _impl
 
 template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH>
-auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::file_handler_t::make_superblock(uint64_t offset) -> shared_ptr<superblock_interface>
+typename _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::offset_type const _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::undef_offset{_impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::offset_type::undef};
+
+template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH>
+typename _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::length_type const _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::undef_length{_impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::length_type::undef};
+
+
+template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH>
+auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::file_handler_t::make_superblock(max_offset_type offset) -> shared_ptr<superblock_interface>
 {
 	auto x = superblock_cache.find(offset);
 	if (x != superblock_cache.end())
@@ -3067,7 +3117,7 @@ auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::file_handler_t::make_superblock(uint
 }
 
 template<int SIZE_OF_OFFSET, int SIZE_OF_LENGTH>
-auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::file_handler_t::make_object(uint64_t offset) -> shared_ptr<object_interface>
+auto _impl<SIZE_OF_OFFSET, SIZE_OF_LENGTH>::file_handler_t::make_object(max_offset_type offset) -> shared_ptr<object_interface>
 {
 	auto x = object_cache.find(offset);
 	if (x != object_cache.end()) {
@@ -3143,18 +3193,18 @@ struct _for_each1;
 
 template<int J, int I, int ... ARGS>
 struct _for_each1<J, I, ARGS...> {
-	static shared_ptr<file_handler_interface> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_length) {
+	static shared_ptr<file_handler_interface> create(string const & abs_filename, uint8_t * data, int version, max_offset_type superblock_offset, int size_of_length) {
 		if (I == size_of_length) {
-			return make_shared<typename _impl<J, I>::file_handler_t>(data, superblock_offset, version);
+			return make_shared<typename _impl<J, I>::file_handler_t>(abs_filename, data, superblock_offset, version);
 		} else {
-			return _for_each1<J, ARGS...>::create(data, version, superblock_offset, size_of_length);
+			return _for_each1<J, ARGS...>::create(abs_filename, data, version, superblock_offset, size_of_length);
 		}
 	}
 };
 
 template<int J>
 struct _for_each1<J> {
-	static shared_ptr<file_handler_interface> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_length) {
+	static shared_ptr<file_handler_interface> create(string const & abs_filename, uint8_t * data, int version, max_offset_type superblock_offset, int size_of_length) {
 		throw EXCEPTION("Unsupported offset and length size combination (%d)", size_of_length);
 	}
 };
@@ -3164,18 +3214,18 @@ struct _for_each0;
 
 template<int J, int ... ARGS>
 struct _for_each0<J, ARGS...> {
-	static shared_ptr<file_handler_interface> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_offset, int size_of_length) {
+	static shared_ptr<file_handler_interface> create(string const & abs_filename, uint8_t * data, int version, max_offset_type superblock_offset, int size_of_offset, int size_of_length) {
 		if (J == size_of_offset) {
-			return _for_each1<J,2,4,8>::create(data, version, superblock_offset, size_of_length);
+			return _for_each1<J,2,4,8>::create(abs_filename, data, version, superblock_offset, size_of_length);
 		} else {
-			return _for_each0<ARGS...>::create(data, version, superblock_offset, size_of_offset, size_of_length);
+			return _for_each0<ARGS...>::create(abs_filename, data, version, superblock_offset, size_of_offset, size_of_length);
 		}
 	}
 };
 
 template<>
 struct _for_each0<> {
-	static shared_ptr<file_handler_interface> create(uint8_t * data, int version, uint64_t superblock_offset, int size_of_offset, int size_of_length) {
+	static shared_ptr<file_handler_interface> create(string const & abs_filename, uint8_t * data, int version, max_offset_type superblock_offset, int size_of_offset, int size_of_length) {
 		throw EXCEPTION("Unsupported offset and length size combination (%d,%d)", size_of_offset, size_of_length);
 	}
 };
@@ -3241,6 +3291,7 @@ struct _h5file : public _h5obj {
 
 	_h5file(string const & filename)
 	{
+
 		fd = open(filename.c_str(), O_RDONLY);
 		if (fd < 0)
 			throw EXCEPTION("Fail to open file `%s'", filename);
@@ -3266,10 +3317,22 @@ struct _h5file : public _h5obj {
 		cout << "file.size_of_offset = " << size_of_offset << endl;
 		cout << "file.size_of_length = " << size_of_length << endl;
 
+		string abs_filename = filename;
+
+		if (filename[0] != '/') {
+			char * c_cwd = getcwd(0, 0);
+			if (c_cwd == 0)
+				EXCEPTION("Cannot get the Current working directory");
+			abs_filename = string{c_cwd}+"/"+filename;
+			free(c_cwd);
+		}
+
+		cout << "abs_filename = `"<<abs_filename<<"'"<<endl;
+
 		/* folowing HDF5 ref implementation size_of_offset and size_of_length must be
 		 * 2, 4, 8, 16 or 32. our implementation is limited to 2, 4 and 8 bytes, uint64_t
 		 */
-		_file_impl = _for_each0<2,4,8>::create(data, version, superblock_offset, size_of_offset, size_of_length);
+		_file_impl = _for_each0<2,4,8>::create(abs_filename, data, version, superblock_offset, size_of_offset, size_of_length);
 		_root_object = _file_impl->get_superblock()->get_root_object();
 	}
 

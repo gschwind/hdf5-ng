@@ -14,6 +14,7 @@
 #include <bitset>
 #include <iostream>
 #include <iomanip>
+#include <limits>
 
 #include <cstring>
 #include <cstdio>
@@ -35,9 +36,99 @@ struct chunk_desc_t {
 	chunk_desc_t & operator=(chunk_desc_t const &) = default;
 };
 
+template <typename _base_type>
+struct unsigned_with_undef {
+	using base_type = _base_type;
+
+	template <typename T>
+	struct _init;
+
+	template <typename T>
+	struct _init<unsigned_with_undef<T>> {
+		static void init(unsigned_with_undef & ths, unsigned_with_undef<T> const & v) {
+			ths._value = v._value;
+		}
+	};
+
+	template <typename T>
+	struct _init {
+		static void init(unsigned_with_undef & ths, T const & v) {
+			ths._value = v;
+		}
+	};
+
+	base_type _value;
+
+	enum: base_type { undef = numeric_limits<base_type>::max() };
+
+	static_assert(std::is_integral<base_type>::value, "struct unsigned_with_undef<T> only available for integral type");
+	static_assert(std::is_unsigned<base_type>::value, "struct unsigned_with_undef<T> only available for unsigned type");
+
+	// cannot be used in union if no default.
+	//constexpr unsigned_with_undef() : _value{undef} { }
+	constexpr unsigned_with_undef() = default;
+
+	template<typename T>
+	unsigned_with_undef(T const & v) { _init<T>::init(*this, v); }
+
+	template<typename T>
+	unsigned_with_undef & operator=(T const & v) { _init<T>::init(*this, v); return *this; };
+
+
+	operator unsigned_with_undef<uint64_t>() const
+	{
+		return _value;
+	}
+
+	operator base_type() const
+	{
+		return _value;
+	}
+
+	friend ostream & operator<< (ostream & o, unsigned_with_undef const & f)
+	{
+		return o << f._value;
+	}
+
+	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator==(T const  & a, unsigned_with_undef const & b) { return a == b._value; }
+	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator!=(T const  & a, unsigned_with_undef const & b) { return a != b._value; }
+	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator<=(T const  & a, unsigned_with_undef const & b) { return a <= b._value; }
+	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator>=(T const  & a, unsigned_with_undef const & b) { return a >= b._value; }
+	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator< (T const  & a, unsigned_with_undef const & b) { return a <  b._value; }
+	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator> (T const  & a, unsigned_with_undef const & b) { return a >  b._value; }
+
+	template<typename T, typename = typename enable_if<is_integral<T>::value>::type > friend auto operator+ (T const  & a, unsigned_with_undef const & b) { return a +  b._value; }
+	template<typename T, typename = typename enable_if<is_integral<T>::value>::type > friend auto operator- (T const  & a, unsigned_with_undef const & b) { return a -  b._value; }
+
+	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator==(unsigned_with_undef const  & a, T const & b) { return a._value == b; }
+	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator!=(unsigned_with_undef const  & a, T const & b) { return a._value != b; }
+	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator<=(unsigned_with_undef const  & a, T const & b) { return a._value <= b; }
+	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator>=(unsigned_with_undef const  & a, T const & b) { return a._value >= b; }
+	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator< (unsigned_with_undef const  & a, T const & b) { return a._value <  b; }
+	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator> (unsigned_with_undef const  & a, T const & b) { return a._value >  b; }
+
+	template<typename T, typename = typename enable_if<is_integral<T>::value>::type > friend auto operator+ (unsigned_with_undef const  & a, T const & b) { return a._value +  b; }
+	template<typename T, typename = typename enable_if<is_integral<T>::value>::type > friend auto operator- (unsigned_with_undef const  & a, T const & b) { return a._value -  b; }
+
+	friend bool operator==(unsigned_with_undef const  & a, unsigned_with_undef const & b) { return a._value == b._value; }
+	friend bool operator!=(unsigned_with_undef const  & a, unsigned_with_undef const & b) { return a._value != b._value; }
+	friend bool operator<=(unsigned_with_undef const  & a, unsigned_with_undef const & b) { return a._value <= b._value; }
+	friend bool operator>=(unsigned_with_undef const  & a, unsigned_with_undef const & b) { return a._value >= b._value; }
+	friend bool operator< (unsigned_with_undef const  & a, unsigned_with_undef const & b) { return a._value <  b._value; }
+	friend bool operator> (unsigned_with_undef const  & a, unsigned_with_undef const & b) { return a._value >  b._value; }
+
+	friend auto operator+ (unsigned_with_undef const  & a, unsigned_with_undef const & b) { return a._value +  b._value; }
+	friend auto operator- (unsigned_with_undef const  & a, unsigned_with_undef const & b) { return a._value -  b._value; }
+
+};
+
+
 // Must be large enough to handle all offset and length type of any impl.
-using max_offset_type = uint64_t;
-using max_length_type = uint64_t;
+using max_offset_type = unsigned_with_undef<uint64_t>;
+using max_length_type = unsigned_with_undef<uint64_t>;
+
+static max_offset_type constexpr undef_max_offset{};
+static max_length_type constexpr undef_max_length{};
 
 struct object_message_handler_t {
 	uint16_t type;   //< actual type
