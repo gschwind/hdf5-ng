@@ -635,10 +635,10 @@ struct object_interface : public _h5obj {
 			break;
 		case 3: // virtual
 			// TODO
-			throw runtime_error("VIRTUAL data layout not implemented");
+			throw EXCEPTION("VIRTUAL data layout not implemented");
 			break;
 		default:
-			throw runtime_error("unknown data layout");
+			throw EXCEPTION("unknown data layout");
 		}
 
 	}
@@ -914,11 +914,11 @@ struct superblock_v2 : public object, public superblock_interface {
 	}
 
 	virtual int group_leaf_node_K() {
-		throw runtime_error("TODO" STR(__LINE__));
+		throw EXCEPTION("TODO");
 	}
 
 	virtual int group_internal_node_K() {
-		throw runtime_error("TODO" STR(__LINE__));
+		throw EXCEPTION("TODO");
 	}
 
 	virtual int indexed_storage_internal_node_K() {
@@ -941,7 +941,7 @@ struct superblock_v2 : public object, public superblock_interface {
 	}
 
 	virtual uint64_t driver_information_address() {
-		throw runtime_error("TODO" STR(__LINE__));
+		throw EXCEPTION("TODO");
 	}
 
 	virtual uint64_t root_node_object_address() {
@@ -975,11 +975,11 @@ struct superblock_v3 : public object, public superblock_interface {
 	}
 
 	virtual int group_leaf_node_K() {
-		throw runtime_error("TODO" STR(__LINE__));
+		throw EXCEPTION("TODO");
 	}
 
 	virtual int group_internal_node_K() {
-		throw runtime_error("TODO" STR(__LINE__));
+		throw EXCEPTION("TODO");
 	}
 
 	virtual int indexed_storage_internal_node_K() {
@@ -1002,7 +1002,7 @@ struct superblock_v3 : public object, public superblock_interface {
 	}
 
 	virtual uint64_t driver_information_address() {
-		throw runtime_error("TODO" STR(__LINE__));
+		throw EXCEPTION("TODO");
 	}
 
 	virtual uint64_t root_node_object_address() {
