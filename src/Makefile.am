@@ -1,11 +1,11 @@
 bin_PROGRAMS = \
-	dummy 
+	ls-objects 
 
 
-dummy_SOURCES = \
+ls_objects_SOURCES = \
 	exception.hxx \
 	h5ng-spec.hxx \
 	h5ng.hxx \
 	h5ng.cxx \
-	main.cxx 
+	ls-objects.cxx 
 

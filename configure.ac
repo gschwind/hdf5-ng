@@ -9,7 +9,7 @@ LT_PREREQ([2.4.6])
 LT_INIT
 AM_INIT_AUTOMAKE([foreign])
 
-AC_CONFIG_SRCDIR([src/main.cxx])
+AC_CONFIG_SRCDIR([src/h5ng.cxx])
 
 # Checks for programs.
 AC_PROG_CXX
