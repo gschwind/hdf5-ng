@@ -29,6 +29,7 @@ int main(int argc, char const ** argv) {
 		} else {
 			if(std::find(visited.begin(), visited.end(), cur.second) == visited.end()) {
 				for(auto x: cur.second.keys()) {
+					cout << "key :" << x << endl;
 					string name = cur.first + "/" + x;
 					s.push(make_pair(name, cur.second[x]));
 				}

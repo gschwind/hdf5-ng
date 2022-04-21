@@ -90,6 +90,11 @@ struct unsigned_with_undef {
 		return o << f._value;
 	}
 
+	bool is_undef() const
+	{
+		return _value == undef;
+	}
+
 	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator==(T const  & a, unsigned_with_undef const & b) { return a == b._value; }
 	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator!=(T const  & a, unsigned_with_undef const & b) { return a != b._value; }
 	template<typename T> friend typename enable_if<is_integral<T>::value, bool>::type operator<=(T const  & a, unsigned_with_undef const & b) { return a <= b._value; }

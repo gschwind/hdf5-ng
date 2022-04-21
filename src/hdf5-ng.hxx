@@ -86,6 +86,60 @@ enum message_typeid_e : uint16_t {
 	MSG_OBJECT_REFERENCE_COUNT             = 0x0016u
 };
 
+static inline std::string message_type_to_string(message_typeid_e type)
+{
+	switch (type) {
+		case MSG_NIL:
+			return "MSG_NIL";
+		case MSG_DATASPACE:
+			return "MSG_DATASPACE";
+		case MSG_LINK_INFO:
+			return "MSG_LINK_INFO";
+		case MSG_DATATYPE:
+			return "MSG_DATATYPE";
+		case MSG_FILL_VALUE:
+			return "MSG_FILL_VALUE";
+		case MSG_DATA_STORAGE_FILL_VALUE:
+			return "MSG_DATA_STORAGE_FILL_VALUE";
+		case MSG_LINK:
+			return "MSG_LINK";
+		case MSG_DATA_STORAGE:
+			return "MSG_DATA_STORAGE";
+		case MSG_DATA_LAYOUT:
+			return "MSG_DATA_LAYOUT";
+		case MSG_BOGUS:
+			return "MSG_BOGUS";
+		case MSG_GROUP_INFO:
+			return "MSG_GROUP_INFO";
+		case MSG_DATA_STORAGE_FILTER_PIPELINE:
+			return "MSG_DATA_STORAGE_FILTER_PIPELINE";
+		case MSG_ATTRIBUTE:
+			return "MSG_ATTRIBUTE";
+		case MSG_OBJECT_COMMENT:
+			return "MSG_OBJECT_COMMENT";
+		case MSG_OBJECT_MODIFICATION_TIME_OLD:
+			return "MSG_OBJECT_MODIFICATION_TIME_OLD";
+		case MSG_SHARED_MESSAGE_TABLE:
+			return "MSG_SHARED_MESSAGE_TABLE";
+		case MSG_OBJECT_HEADER_CONTINUATION:
+			return "MSG_OBJECT_HEADER_CONTINUATION";
+		case MSG_SYMBOL_TABLE:
+			return "MSG_SYMBOL_TABLE";
+		case MSG_OBJECT_MODIFICATION_TIME:
+			return "MSG_OBJECT_MODIFICATION_TIME";
+		case MSG_BTREE_K_VALUE:
+			return "MSG_BTREE_K_VALUE";
+		case MSG_DRIVER_INFO:
+			return "MSG_DRIVER_INFO";
+		case MSG_ATTRIBUTE_INFO:
+			return "MSG_ATTRIBUTE_INFO";
+		case MSG_OBJECT_REFERENCE_COUNT:
+			return "MSG_OBJECT_REFERENCE_COUNT";
+		default:
+			return "MSG_UNKNOWN";
+	}
+}
+
 
 struct _named_tuple_0 {
 	uint64_t offset_of_size_offset;
@@ -2827,9 +2881,9 @@ struct object_template : public TRAIT, public object_interface {
 	// @return the object offset within the file or undef_offset if not found.
 	auto canonical_obj_lookup(string const & name) const -> max_offset_type override
 	{
-		offset_type offset = undef_offset;
+		max_offset_type offset = undef_offset;
 
-		for (auto i = get_message_iterator(); not i.end() and offset == undef_offset; ++i) {
+		for (auto i = get_message_iterator(); not i.end() and offset.is_undef(); ++i) {
 			auto msg = *i;
 
 			switch (msg.type) {
@@ -2860,13 +2914,18 @@ struct object_template : public TRAIT, public object_interface {
 	virtual auto operator[](string const & name) const -> h5obj override
 	{
 
+		auto offset = this->canonical_obj_lookup(name);
+		if (offset.is_undef())
+			throw EXCEPTION("object named `%s` not found", name.c_str());
+		return h5obj{file->make_object(offset)};
+
 //		auto ret = *this;
 //		size_t cpos = 0;
 //		size_t npos = name.find('/', cpos);
 //		if (npos == string::npos) npos = name.size();
 //
 //		if (cpos != npos) {
-//			offset_type offset = ret->_canonical_obj_lookup(name.substr(cpos,npos-cpos));
+//			offset_type offset = this->canonical_obj_lookup(name.substr(cpos,npos-cpos));
 //			if (offset == undef_offset)
 //				throw EXCEPTION("KeyError: Key not found `%s'", name.c_str());
 //			ret = h5obj{file->make_object(offset)}
@@ -3023,6 +3082,8 @@ struct object_template : public TRAIT, public object_interface {
 	{
 		for (auto i = get_message_iterator(); not i.end(); ++i) {
 			auto msg = *i;
+
+			cout << "Message: " << message_type_to_string(static_cast<message_typeid_e>(msg.type)) << endl;
 
 			switch(msg.type) {
 			case MSG_DATATYPE:
